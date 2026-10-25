@@ -1,0 +1,20 @@
+// Run only after package-smoke-upload.apex in a disposable subscriber validation org.
+List<Account> fixtures=[SELECT Id FROM Account WHERE Name='Package smoke upload'];
+System.assertEquals(1,fixtures.size(),'Expected exactly the smoke-test Account.');
+Id accountId=fixtures[0].Id;
+Map<String,Object> response=(Map<String,Object>)JSON.deserializeUntyped(orgloom.OrgLoomNativeController.invoke('history:list','{}'));
+System.assertEquals(200,response.get('status'),JSON.serialize(response));
+List<Object> batches=(List<Object>)((Map<String,Object>)response.get('data')).get('batches');
+System.assert(!batches.isEmpty());
+String batchId=(String)((Map<String,Object>)batches[0]).get('id');
+response=(Map<String,Object>)JSON.deserializeUntyped(orgloom.OrgLoomNativeController.invoke('history:preflight',JSON.serialize(new Map<String,Object>{'id'=>batchId})));
+System.assertEquals(200,response.get('status'),JSON.serialize(response));
+Map<String,Object> review=(Map<String,Object>)response.get('data');
+List<Object> clean=(List<Object>)review.get('clean');
+System.assertEquals(1,clean.size());
+System.assertEquals(accountId,(Id)(String)((Map<String,Object>)clean[0]).get('sfId'),'Recall must target only the disposable fixture.');
+System.assertEquals(0,((List<Object>)review.get('drifted')).size());
+response=(Map<String,Object>)JSON.deserializeUntyped(orgloom.OrgLoomNativeController.invoke('history:recall',JSON.serialize(new Map<String,Object>{'id'=>batchId,'nativeReviewToken'=>review.get('nativeReviewToken')})));
+System.assertEquals(200,response.get('status'),JSON.serialize(response));
+System.assertEquals(0,[SELECT COUNT() FROM Account WHERE Id=:accountId]);
+System.debug('PASS: installed encrypted history and separate-request Recall removed the fixture.');

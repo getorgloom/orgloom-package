@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+<applicationVisibilities><application>OrgLoom</application><visible>true</visible></applicationVisibilities>
+<classAccesses><apexClass>OrgLoomNativeController</apexClass><enabled>true</enabled></classAccesses>
+<customPermissions><enabled>true</enabled><name>OrgLoomNative_Access</name></customPermissions>
+<description>Org Loom canvas access. Feature access is managed in Org Loom administration. Does not grant business object or field permissions.</description>
+<label>Org Loom Canvas</label>
+<pageAccesses><apexPage>OrgLoomNative</apexPage><enabled>true</enabled></pageAccesses><pageAccesses><apexPage>OrgLoomNativeLaunch</apexPage><enabled>true</enabled></pageAccesses>
+<tabSettings><tab>OrgLoomNativeCanvas</tab><visibility>Visible</visibility></tabSettings>
+</PermissionSet>

@@ -1,0 +1,13 @@
+<apex:page controller="OrgLoomNativeAdmin" showHeader="false" sidebar="false" standardStylesheets="false" docType="html-5.0">
+  <link rel="stylesheet" href="{!URLFOR($Resource.OrgLoomNativeAssets, 'native/admin-pages.css')}"/>
+  <main><header class="page-header"><div class="wordmark">Org <span>Loom</span></div><h1>Team administration</h1></header>
+    <apex:outputPanel rendered="{!NOT(allowed)}"><p>Your Salesforce administrator must grant Org Loom access and administrator permissions.</p></apex:outputPanel>
+    <apex:outputPanel rendered="{!allowed}" layout="block">
+      <div class="controls panel"><div class="field search-field"><label for="search">Find user</label><input id="search" type="search" placeholder="Name or username"/></div><button id="find" class="primary" type="button">Search</button><div class="field user-picker"><label for="user">Salesforce user</label><select id="user" aria-label="Salesforce user"></select></div></div>
+      <p id="status" class="result-status" role="status" aria-live="polite"></p>
+      <div class="table-wrap panel"><table class="feature-table" aria-label="Feature access"><thead><tr><th>Feature</th><th>Enabled for user</th><th>Enabled for org</th><th>Availability</th></tr></thead><tbody id="features"></tbody></table></div>
+      <script>window.__ORGLOOM_ADMIN_REMOTE__='{!$RemoteAction.OrgLoomNativeAdmin.invoke}';</script>
+      <script src="{!URLFOR($Resource.OrgLoomNativeAssets, 'native/admin.js')}"></script>
+    </apex:outputPanel>
+  </main>
+</apex:page>

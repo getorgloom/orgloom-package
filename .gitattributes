@@ -1,0 +1,3 @@
+# Build manifests hash exact upstream bytes, independent of checkout platform.
+vendor/upstream/** -text
+vendor/key-service/** -text

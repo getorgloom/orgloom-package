@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomApplication xmlns="http://soap.sforce.com/2006/04/metadata">
+  <description>Explore, edit, create and share Salesforce records on a canvas.</description>
+  <formFactors>Large</formFactors>
+  <label>Org Loom</label>
+  <navType>Standard</navType>
+  <tabs>OrgLoomNativeCanvas</tabs>
+  <tabs>OrgLoomNativeAdmin</tabs>
+  <tabs>OrgLoomNativeActivity</tabs>
+  <uiType>Lightning</uiType>
+</CustomApplication>

@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata"><fullName>Canvas__c</fullName><label>Canvas</label><deleteConstraint>Cascade</deleteConstraint><referenceTo>OrgLoomNativeCanvas__c</referenceTo><relationshipName>CanvasGrants</relationshipName><type>Lookup</type></CustomField>

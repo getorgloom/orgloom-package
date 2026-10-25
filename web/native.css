@@ -1,0 +1,17 @@
+html,body {margin:0;padding:0;height:100%;background:var(--bg);color:var(--ink);}
+/* The embedded canvas has no hosted navigation header to reserve space for. */
+body.canvas-page > .app-main {margin-top:0;padding-top:0;}
+body.canvas-page .graph-overlay {top:0;}
+/* Opening a saved canvas can require takeover confirmation while the shared
+   replacement-loading mask (z-index 9200) is still active. */
+body.canvas-page .app-confirm-modal {z-index:9300;}
+#native-status {position:fixed;bottom:12px;left:12px;}
+#native-recovery-status {position:fixed;bottom:8px;right:12px;z-index:100;font:11px/1.4 system-ui;color:var(--ink);background:var(--bg);padding:4px 8px;border-radius:4px;max-width:480px;}
+#native-recovery-status[data-error="true"] {color:#e5b66b;}
+#native-recovery-loading {position:fixed;inset:0;z-index:9201;background:var(--bg);display:grid;place-items:center;font:14px system-ui;}
+#native-partial-view {font:12px/1.4 system-ui;max-width:580px;color:var(--ink);padding:10px 14px;}
+[hidden] {display:none!important;}
+[data-playground-reset],#canvas-onboarding-progress {display:none!important;}
+[data-bulk-op="generate-ai"],[data-ai-proposals],[data-mcp],[data-mcp-settings] {display:none!important;}
+#native-session-ended{position:fixed;inset:0;z-index:2147483647;background:var(--bg);padding:15vh 10vw;font:16px system-ui;display:flex;flex-direction:column;align-items:flex-start;gap:15px}
+

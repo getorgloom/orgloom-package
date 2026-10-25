@@ -1,0 +1,17 @@
+[
+  {"id":"browse-records","permission":"Browse","label":"Browse records"},
+  {"id":"soql-import","permission":"Soql","label":"Import via SOQL"},
+  {"id":"upload-records","permission":"Upload","label":"Upload changes"},
+  {"id":"bulk-edit-records","permission":"BulkEdit","label":"Bulk edit records"},
+  {"id":"save-canvas","permission":"Save","label":"Save canvases"},
+  {"id":"open-saved-canvas","permission":"Open","label":"Open saved canvases"},
+  {"id":"share-canvas","permission":"Share","label":"Share canvases"},
+  {"id":"receive-canvas","permission":"Receive","label":"Receive shared canvases"},
+  {"id":"create-slot-canvas","permission":"Requests","label":"Create record and field requests"},
+  {"id":"recall-upload","permission":"Recall","label":"Recall uploads"},
+  {"id":"export-canvas","permission":"ExportCanvas","label":"Export canvases"},
+  {"id":"export-records","permission":"ExportRecords","label":"Export records"},
+  {"id":"run-script","permission":"Script","label":"Run scripts"},
+  {"id":"auto-fill-records","permission":"Autofill","label":"Auto-fill records"},
+  {"id":"view-activity-history","permission":"History","label":"View activity history"}
+]

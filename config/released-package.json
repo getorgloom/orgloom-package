@@ -1,0 +1,15 @@
+{
+  "package": "Orgloom",
+  "namespace": "orgloom",
+  "packageId": "0Hoao0000003RYLCA2",
+  "subscriberPackageVersionId": "04tao000005eJsHAAU",
+  "version": "0.6.0.2",
+  "ancestorId": "04tao000005dalVAAQ",
+  "released": true,
+  "releasedOn": "2026-10-23",
+  "sourceManifestSha256": "32b20c28e1ef9d18f509ef83d88dffd53a5f782bd6633f2c3667626c057be973",
+  "apexCoveragePercent": 94,
+  "installedApexTests": 123,
+  "localTests": 125,
+  "installationSecurityType": "AdminsOnly"
+}

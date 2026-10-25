@@ -1,0 +1,7 @@
+<template>
+    <template lwc:if={error}><p role="alert">{error}</p></template>
+    <template lwc:if={source}><iframe src={source} title="Org Loom canvas" allow="clipboard-write"></iframe></template>
+    <template for:each={jobs} for:item="job">
+        <c-org-loom-native-layout key={job.id} request={job} onlayoutresult={completed}></c-org-loom-native-layout>
+    </template>
+</template>

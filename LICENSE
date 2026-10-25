@@ -1,0 +1,33 @@
+Copyright 2026 Orgloom. All rights reserved, except as stated below.
+
+SOURCE PUBLISHED FOR INSPECTION
+
+Org Loom's proprietary Salesforce-native source code is published for
+transparency and security review. Publication does not grant a license to
+build, deploy, execute, modify, redistribute, sublicense, or incorporate that
+code into another product. Operational use, including use of the installed
+managed package, requires separate authorization under an applicable license
+agreement with Org Loom.
+
+This notice does not restrict rights provided by applicable law or the terms
+of the source hosting platform, including GitHub's rights to view and fork
+public repositories. Those platform rights do not constitute a general
+license from Org Loom to deploy or operate the software.
+
+EXISTING LICENSES AND THIRD-PARTY COMPONENTS
+
+This notice applies only to Org Loom's proprietary native code. Components
+provided under separate licenses retain those licenses and their notices.
+In particular:
+
+- The bundled shared canvas retains the license in
+  vendor/upstream/packages/canvas/LICENSE.
+- Third-party libraries retain their respective licenses under
+  vendor/libraries/ and any notices included in their source files.
+- Previously licensed code, including reused portions of the key service
+  and the retained code under compatibility/, remains subject
+  to applicable existing license grants. This notice does not revoke or narrow rights
+  already granted for those versions or portions.
+
+Where a component's existing license grants rights, this notice does not
+override those rights. See LICENSING.md for the component locations.

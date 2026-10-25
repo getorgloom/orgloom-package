@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata"><deploymentStatus>Deployed</deploymentStatus><description>Administrative activity summaries only. No Salesforce record values.</description><label>Org Loom Activity</label><nameField><label>Activity Number</label><type>AutoNumber</type><displayFormat>A-{000000}</displayFormat></nameField><pluralLabel>Org Loom Activity</pluralLabel><sharingModel>Private</sharingModel></CustomObject>

@@ -1,0 +1,7 @@
+<apex:page controller="OrgLoomNativeController" showHeader="false" sidebar="false" standardStylesheets="false" applyHtmlTag="false" applyBodyTag="false">
+<html><body><script>
+// Read-only launcher: URLFOR supplies Salesforce's confirmation token for the
+// protected canvas page. No state changes or credentials occur on this GET.
+window.location.replace('{!JSENCODE(URLFOR($Page.OrgLoomNative, null, [openCanvas=requestedCanvas]))}');
+</script></body></html>
+</apex:page>

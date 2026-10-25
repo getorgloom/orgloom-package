@@ -1,0 +1,7 @@
+node_modules/
+.sf/
+.sfdx/
+output/
+*-result.json
+deploy-tests.json
+force-app/main/default/staticresources/OrgLoomNativeAssets.resource

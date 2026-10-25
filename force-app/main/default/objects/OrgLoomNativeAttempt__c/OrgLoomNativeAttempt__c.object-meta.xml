@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata"><deploymentStatus>Deployed</deploymentStatus><label>Org Loom Upload Attempt</label><nameField><label>Number</label><type>AutoNumber</type><displayFormat>N-{000000}</displayFormat></nameField><pluralLabel>Org Loom Upload Attempts</pluralLabel><sharingModel>Private</sharingModel></CustomObject>

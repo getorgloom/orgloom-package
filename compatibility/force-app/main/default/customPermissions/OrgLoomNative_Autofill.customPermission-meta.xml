@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomPermission xmlns="http://soap.sforce.com/2006/04/metadata"><description>Auto-fill records. Does not grant Salesforce data access.</description><label>Auto-fill records</label></CustomPermission>

@@ -1,0 +1,22 @@
+<apex:page controller="OrgLoomNativeActivity" showHeader="false" sidebar="false" standardStylesheets="false" docType="html-5.0">
+  <link rel="stylesheet" href="{!URLFOR($Resource.OrgLoomNativeAssets, 'native/admin-pages.css')}"/>
+  <main><header class="page-header"><div class="wordmark">Org <span>Loom</span></div><h1>Activity</h1></header>
+    <apex:outputPanel rendered="{!NOT(allowed)}"><p>Org Loom administrator access is required.</p></apex:outputPanel>
+    <apex:outputPanel rendered="{!allowed}" layout="block">
+      <form id="activity-filters" class="filters panel">
+        <label>Action<select id="activity-action"><option value="">All actions</option></select></label>
+        <label>Status<select id="activity-state"><option value="">All statuses</option><option value="success">Success</option><option value="partial">Partial</option><option value="failed">Failed</option></select></label>
+        <label>From<input id="activity-from" type="date"/></label><label>To<input id="activity-to" type="date"/></label>
+        <label class="search-field">Find user<input id="activity-search" type="search" placeholder="Name or username" maxlength="100"/></label>
+        <button id="activity-find" type="button">Find user</button>
+        <label class="user-picker">User<select id="activity-user"><option value="">All users</option></select></label>
+        <div class="filter-actions"><button type="submit" class="primary">Apply filters</button><button id="activity-refresh" type="button">Refresh</button></div>
+      </form>
+      <p id="activity-status" class="result-status" role="status" aria-live="polite"></p>
+      <div class="table-wrap panel"><table class="activity-table" aria-label="Salesforce data activity"><thead><tr><th>When</th><th>Action</th><th>Status</th><th>User</th><th>Details</th></tr></thead><tbody id="activity-rows"></tbody></table></div>
+      <div class="pager"><button id="activity-prev" type="button" disabled="disabled">Previous</button><span id="activity-page"></span><button id="activity-next" type="button" disabled="disabled">Next</button></div>
+      <script>window.__ORGLOOM_ACTIVITY_REMOTE__='{!$RemoteAction.OrgLoomNativeActivity.invoke}';</script>
+      <script src="{!URLFOR($Resource.OrgLoomNativeAssets, 'native/activity.js')}"></script>
+    </apex:outputPanel>
+  </main>
+</apex:page>
