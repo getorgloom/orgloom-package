@@ -3,7 +3,20 @@
 public without sharing class OrgLoomNativeHistory {
     public class HistoryException extends Exception {}
     private static String context(Id id){return UserInfo.getOrganizationId()+':upload-recall:'+id;}
-    private static Boolean sameTime(Object left,Object right){return JSON.deserialize(JSON.serialize(left),Datetime.class)==JSON.deserialize(JSON.serialize(right),Datetime.class);}
+    private static Boolean sameTime(Object left,Object right){
+        if(left==null||right==null)return left==null&&right==null;
+        Datetime leftTime=(Datetime)JSON.deserialize(JSON.serialize(left),Datetime.class),rightTime=(Datetime)JSON.deserialize(JSON.serialize(right),Datetime.class);
+        return leftTime.getTime()==rightTime.getTime();
+    }
+    @TestVisible private static Boolean sameFieldValue(Object left,Object right,Schema.DescribeFieldResult field){
+        if(left==null||right==null)return left==null&&right==null;
+        // SOQL returns a Datetime; encrypted JSON history returns an ISO string.
+        // Compare instants, preserving milliseconds, rather than timezone formatting.
+        if(field.getType()==Schema.DisplayType.DATETIME){
+            try{return sameTime(left,right);}catch(Exception e){return false;}
+        }
+        return JSON.serialize(left)==JSON.serialize(right);
+    }
     private static Map<String,Object> asMap(Object value){return (Map<String,Object>)JSON.deserializeUntyped(JSON.serialize(value));}
     public static void capture(OrgLoomNativeAttempt__c journal,List<Object> results,Map<String,Object> after,Map<Id,SObject> originals,Map<String,Map<String,Object>> rows,Map<String,Map<String,String>> links){
         List<Object> records=new List<Object>();
@@ -11,14 +24,14 @@ public without sharing class OrgLoomNativeHistory {
             Map<String,Object> result=(Map<String,Object>)raw;String mode=(String)result.get('mode');if(mode!='create'&&mode!='update')continue;
             String temp=String.valueOf(result.get('tempId')),name=(String)result.get('objectName');Id id=(Id)String.valueOf(result.get('id'));
             if(!after.containsKey(temp))throw new HistoryException('Could not capture upload history. No changes were committed.');
-            Map<String,Object> current=asMap(after.get(temp)),before=new Map<String,Object>(),uploaded=new Map<String,Object>();
+            Map<String,Object> current=OrgLoomNativeEncrypted.strip(name,asMap(after.get(temp))),before=new Map<String,Object>(),uploaded=new Map<String,Object>();
             if(mode=='update'){
                 Set<String> fields=new Set<String>(((Map<String,Object>)rows.get(temp).get('values')).keySet());if(links.containsKey(temp))fields.addAll(links.get(temp).keySet());
                 Schema.DescribeSObjectResult d=OrgLoomNativeController.objectInfo(name);
                 for(String field:fields){Schema.SObjectField token=d.fields.getMap().get(field);if(token==null)continue;Schema.DescribeFieldResult f=token.getDescribe();
-                    if(OrgLoomNativeController.supported(f)&&f.isUpdateable()&&!f.isCalculated()&&!f.isAutoNumber()){
+                    if(!OrgLoomNativeEncrypted.isField(name,field)&&OrgLoomNativeController.supported(f)&&f.isUpdateable()&&!f.isCalculated()&&!f.isAutoNumber()){
                         Object old=originals.get(id).get(field),value=current.get(field);
-                        if(JSON.serialize(old)!=JSON.serialize(value)){before.put(field,old);uploaded.put(field,value);}
+                        if(!sameFieldValue(old,value,f)){before.put(field,old);uploaded.put(field,value);}
                     }
                 }
             }
@@ -56,7 +69,8 @@ public without sharing class OrgLoomNativeHistory {
     }
     private static String token(Id id,Map<Id,SObject> found){return OrgLoomNativeUpload.fingerprint(new Map<String,Object>{'batch'=>id,'current'=>asMap(found)});}
     private static Boolean creationChanged(Map<String,Object> record,SObject live){
-        return record.get('createdValues')!=null?OrgLoomNativeUpload.fingerprint(asMap(live))!=OrgLoomNativeUpload.fingerprint((Map<String,Object>)record.get('createdValues')):!sameTime(live.get('LastModifiedDate'),record.get('lastModifiedDate'));
+        String name=(String)record.get('objectName');
+        return record.get('createdValues')!=null?OrgLoomNativeUpload.fingerprint(OrgLoomNativeEncrypted.strip(name,asMap(live)))!=OrgLoomNativeUpload.fingerprint(OrgLoomNativeEncrypted.strip(name,(Map<String,Object>)record.get('createdValues'))):!sameTime(live.get('LastModifiedDate'),record.get('lastModifiedDate'));
     }
     public static Object preflight(Id id){
         OrgLoomNativeAccess.requireCapability('recall-upload');OrgLoomNativeAttempt__c journal=owned(id);List<Object> records=(List<Object>)snapshot(journal).get('records');Map<Id,SObject> found=current(records,false);
@@ -75,10 +89,10 @@ public without sharing class OrgLoomNativeHistory {
             }else{
                 List<Object> sameFields=new List<Object>(),changedFields=new List<Object>();Map<String,Object> prior=(Map<String,Object>)record.get('before'),uploaded=(Map<String,Object>)record.get('after');
                 for(String field:prior.keySet()){
-                    if(completed.containsKey(sfId+':'+field))continue;
+                    if(completed.containsKey(sfId+':'+field)||OrgLoomNativeEncrypted.isField(name,field))continue;
                     Schema.SObjectField f=d.fields.getMap().get(field);if(f==null||!OrgLoomNativeController.supported(f.getDescribe())||!f.getDescribe().isUpdateable())continue;
                     Object value=live.get(field);Map<String,Object> detail=new Map<String,Object>{'fieldName'=>field,'prior'=>prior.get(field),'uploaded'=>uploaded.get(field),'current'=>value};
-                    if(JSON.serialize(value)==JSON.serialize(uploaded.get(field)))sameFields.add(detail);else{changedFields.add(detail);changedCount++;}
+                    if(sameFieldValue(value,uploaded.get(field),f.getDescribe()))sameFields.add(detail);else{changedFields.add(detail);changedCount++;}
                 }
                 label.put('clean',sameFields);label.put('drifted',changedFields);review.add(label);
             }
@@ -113,7 +127,7 @@ public without sharing class OrgLoomNativeHistory {
             OrgLoomNativeAttempt__c journal=owned(id);String requestDigest=OrgLoomNativeUpload.fingerprint(body);
             if(journal.RecallResult__c!=null){Map<String,Object> last=(Map<String,Object>)JSON.deserializeUntyped(journal.RecallResult__c);if(last.get('requestDigest')==requestDigest)return last.get('response');}
             List<Object> records=(List<Object>)snapshot(journal).get('records');Map<Id,SObject> found=current(records,true);
-            if(body.get('nativeReviewToken')!=token(id,found))throw new HistoryException('Records changed since the Recall review. Review the current values again before applying.');
+            if(body.get('nativeReviewToken')!=token(id,found))throw new HistoryException('This Recall review is no longer current. No Salesforce records were changed. Open Upload History, select this upload, and start Recall again to review the latest values.');
             Map<String,Object> completed=completion(journal);Set<Id> skip=idSet(body.get('skipSfIds')),force=idSet(body.get('forceDeleteSfIds')),deleting=new Set<Id>();
             Map<String,Map<String,Object>> history=new Map<String,Map<String,Object>>();for(Object raw:records){Map<String,Object> r=(Map<String,Object>)raw;history.put((String)r.get('sfId'),r);}
             for(Id forced:force)if(!history.containsKey(forced)||history.get(forced).get('mode')!='create')throw new HistoryException('Invalid deletion selection.');
@@ -131,9 +145,9 @@ public without sharing class OrgLoomNativeHistory {
                 for(Object fieldRaw:(List<Object>)chosen.get('fields')){
                     Boolean forced=selection=='forceRevertSelections';Map<String,Object> forceField=forced?(Map<String,Object>)fieldRaw:null;String field=forced?(String)forceField.get('fieldName'):(String)fieldRaw,key=sfId+':'+field;
                     Map<String,Object> before=(Map<String,Object>)record.get('before'),after=(Map<String,Object>)record.get('after');Schema.SObjectField fieldToken=d.fields.getMap().get(field);
-                    if(!before.containsKey(field)||!selectedFields.add(key)||completed.containsKey(key)||fieldToken==null||!OrgLoomNativeController.supported(fieldToken.getDescribe())||!fieldToken.getDescribe().isUpdateable())throw new HistoryException('A selected field is unavailable for Recall.');
+                    if(OrgLoomNativeEncrypted.isField((String)record.get('objectName'),field)||!before.containsKey(field)||!selectedFields.add(key)||completed.containsKey(key)||fieldToken==null||!OrgLoomNativeController.supported(fieldToken.getDescribe())||!fieldToken.getDescribe().isUpdateable())throw new HistoryException('A selected field is unavailable for Recall.');
                     Schema.DescribeFieldResult f=fieldToken.getDescribe();Object live=found.get(sfId).get(field),expected=OrgLoomNativeController.convert(forced?forceField.get('expectedCurrent'):after.get(field),f);
-                    if(live!=expected)throw new HistoryException('A field changed since review. Review it again before overriding.');
+                    if(f.getType()==Schema.DisplayType.DATETIME?!sameFieldValue(live,expected,f):live!=expected)throw new HistoryException('A field changed since review. Review it again before overriding.');
                     if(forced)forcedFieldCount++;
                     if(!patches.containsKey(sfId))patches.put(sfId,d.getSObjectType().newSObject(sfId));patches.get(sfId).put(field,OrgLoomNativeController.convert(before.get(field),f));
                 }

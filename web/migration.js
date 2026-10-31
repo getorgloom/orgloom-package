@@ -43,6 +43,10 @@
       const result={id:r.id,objectName:r.objectName,label:r.label,x:r.x,y:r.y,values};
       if(r.pendingDelete)result.pendingDelete=true;
       if(r.loadedFromId){
+        // Upload's concurrency check needs the destination timestamp, including
+        // for deletions. Keep it as read-only snapshot metadata through import;
+        // writable-field filtering above deliberately omits all source timestamps.
+        if(r.loadedValues?.LastModifiedDate)values.LastModifiedDate=r.loadedValues.LastModifiedDate;
         result.loadedFromId=r.loadedFromId;result.originalValues={};
         for(const name of Object.keys(values))if(JSON.stringify(values[name])!==JSON.stringify(r.loadedValues?.[name]))result.originalValues[name]=r.loadedValues?.[name]??null;
       }
@@ -68,10 +72,9 @@
       document.body.append(overlay);overlay.querySelector('[data-migration]').focus();
     });
   }
-  async function start(payload,options,apply){
-    await json('/api/capabilities/bulk-edit-records/check',{});
-    if(options?.merge)throw Error('Migration replaces the current canvas after review. Choose Open instead of Merge.');
-    const engine=window.Orgloom.migrateAnnotate;
+  async function start(payload,options,apply,beginImportLoad){
+    const finishLoading=beginImportLoad?.('Preparing migration review…');
+    let state;
     const describes={};
     async function ensureDescribe(name){
       const describe=await json('/api/objects/'+encodeURIComponent(name)+'/describe');
@@ -83,9 +86,16 @@
       }
       describes[name]=describe;return describe;
     }
+    try {
+    await json('/api/capabilities/bulk-edit-records/check',{});
+    if(options?.merge)throw Error('Migration replaces the current canvas after review. Choose Open instead of Merge.');
     // UI metadata only; source record IDs are never queried in the destination.
     for(const name of new Set((payload.records||[]).map(r=>r.objectName)))try{await ensureDescribe(name);}catch(error){describes[name]={name,fields:[],_unavailable:true};}
-    const state=stage(payload,describes);if(!state.bulkRecords.length)throw Error('This file has no completed records to migrate.');
+    state=stage(payload,describes);if(!state.bulkRecords.length)throw Error('This file has no completed records to migrate.');
+    } finally {
+      finishLoading?.();
+    }
+    const engine=window.Orgloom.migrateAnnotate;
     let applied=false;
     return new Promise(resolve=>{
       const dialog=window.OrgLoom.migrateMatch.mount({canvasState:state,csrfFetch:window.fetch,escapeHtml,ensureDescribe,renderBulkView:()=>{},onApplied:()=>{},
@@ -106,7 +116,7 @@
         }});
       dialog.open({onClose:()=>resolve(applied)});
       const intro=document.querySelector('.migrate-match-modal .mm-decision-intro');
-      if(intro){const note=document.createElement('p');note.textContent='File migration into '+window.__ORGLOOM_NATIVE_IDENTITY__.orgName+'. Source record IDs and standalone lookup values are cleared; canvas relationships are rebuilt. Your current canvas stays unchanged until Apply.'+(state.omittedRequests?' '+state.omittedRequests+' empty record request(s) omitted; completed requested records are included.':'');intro.append(note);}
+      if(intro&&state.omittedRequests){const note=document.createElement('p');note.textContent=state.omittedRequests+' empty record request(s) omitted; completed requested records are included.';intro.append(note);}
     });
   }
   window.OrgLoomNativeMigration={isMigration,start,chooseExport};

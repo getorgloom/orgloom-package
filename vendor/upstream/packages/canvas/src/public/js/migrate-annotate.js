@@ -213,6 +213,15 @@
 			if (_isEmpty(pv)) {
 				continue;
 			}
+			if (pf.type === 'boolean' && typeof pv !== 'boolean' && !/^(true|false)$/i.test(String(pv).trim())) {
+				issues.push({
+					kind: 'boolean-mismatch',
+					severity: 'blocked',
+					field: pf.name,
+					sourceValue: pv,
+					message: (pf.label || pf.name) + ' is a checkbox in the destination. Choose True or False.',
+				});
+			}
 			if (
 				(pf.type === 'picklist' || pf.type === 'multipicklist') &&
 				!supportsCustomPicklistValue(pf) &&
@@ -498,6 +507,7 @@
 		'_migrateClearRecordType',
 		'_migratePicklistRemap',
 		'_migrateFieldResolutions',
+		'_migrateRelationshipRemap',
 		'_sourceRecordTypeDeveloperName',
 		'_wasLoadedFromOrgId',
 		'_wasLoadedFromId',
@@ -519,6 +529,89 @@
 			}
 		}
 		return null;
+	}
+
+	function resolvedAssociations(records, associations) {
+		return (associations || []).flatMap(function (edge) {
+			var child = (records || []).find(function (r) {
+				return String(r.id) === String(edge.fromId);
+			});
+			var mappings = child && child._migrateRelationshipRemap;
+			var mapped = mappings && Object.prototype.hasOwnProperty.call(mappings, edge.fieldName);
+			return mapped && mappings[edge.fieldName] === ''
+				? []
+				: [
+						Object.assign({}, edge, {
+							fieldName: mapped ? mappings[edge.fieldName] : edge.fieldName,
+						}),
+					];
+		});
+	}
+
+	function relationshipIssues(record, records, associations, describeByObject) {
+		if (!record || record._migrateExcluded || isMigrationDelete(record)) return [];
+		var fields = ((describeByObject || {})[record.objectName] || {}).fields || [];
+		var occupied = new Set();
+		var issues = [];
+		(associations || []).forEach(function (edge) {
+			if (String(edge.fromId) !== String(record.id)) return;
+			var parent = (records || []).find(function (r) {
+				return String(r.id) === String(edge.toId);
+			});
+			if (!parent || parent._migrateExcluded) return;
+			var mappings = record._migrateRelationshipRemap || {};
+			var name = Object.prototype.hasOwnProperty.call(mappings, edge.fieldName)
+				? mappings[edge.fieldName]
+				: edge.fieldName;
+			var original = fields.find(function (f) {
+				return f.name.toLowerCase() === edge.fieldName.toLowerCase();
+			});
+			var field = fields.find(function (f) {
+				return f.name.toLowerCase() === name.toLowerCase();
+			});
+			var message;
+			if (
+				name !== edge.fieldName &&
+				original &&
+				!record._migrateMatchedId &&
+				(original.required || (original.nillable === false && !original.defaultedOnCreate))
+			) {
+				message =
+					'The destination still requires ' +
+					original.name +
+					'. Exclude this record or supply a compatible relationship before migrating.';
+			} else if (!name) return;
+			else if (field && field.type === 'reference' && record._migrateMatchedId && field.updateable === false)
+				return;
+			else if (!field || field.type !== 'reference')
+				message = 'The destination has no lookup field named ' + name + '.';
+			else if (!(field.referenceTo || []).includes(parent.objectName)) {
+				message =
+					name +
+					' accepts ' +
+					(field.referenceTo || []).join(', ') +
+					' in the destination, but this link points to ' +
+					parent.objectName +
+					'.';
+			} else if ((record._migrateMatchedId ? field.updateable : field.createable) === false) {
+				message = name + ' is not writable in the destination.';
+			} else if (occupied.has(name.toLowerCase()))
+				message =
+					'More than one relationship is mapped to ' +
+					name +
+					'. Choose a different lookup or omit one relationship.';
+			if (name) occupied.add(name.toLowerCase());
+			if (message)
+				issues.push({
+					kind: 'relationship-mismatch',
+					severity: 'blocked',
+					field: edge.fieldName,
+					parentObject: parent.objectName,
+					parentId: parent.id,
+					message: message,
+				});
+		});
+		return issues;
 	}
 
 	function exclusionIssues(record, records, associations, describeByObject) {
@@ -566,6 +659,13 @@
 		// Compile the entire plan before touching live records. A failed destination
 		// refresh therefore leaves the reviewable migration state intact.
 		var source = Array.isArray(records) ? records : [];
+		var originalAssociations = associations;
+		// Validate independently of UI annotations; a direct Apply must also fail closed.
+		source.forEach(function (record) {
+			var problems = relationshipIssues(record, source, associations, describeByObject);
+			if (problems.length) throw new Error(problems[0].message);
+		});
+		associations = resolvedAssociations(source, associations);
 		var annotations = annotationsById || {};
 		var baselines = baselinesByKey || {};
 		var plannedById = {};
@@ -597,9 +697,9 @@
 				continue;
 			}
 			var annotation = annotations[record.id];
-			var relationshipIssues = exclusionIssues(record, source, associations, describeByObject);
-			if (relationshipIssues.length) {
-				throw new Error(relationshipIssues[0].message);
+			var excludedIssues = exclusionIssues(record, source, associations, describeByObject);
+			if (excludedIssues.length) {
+				throw new Error(excludedIssues[0].message);
 			}
 			if (annotation && (annotation.status === 'pending' || annotation.status === 'blocked')) {
 				throw new Error('Resolve unavailable objects and required fields before applying the migration.');
@@ -610,6 +710,12 @@
 				throw new Error('Select a destination record to delete, or choose Create new.');
 			}
 			var patch = deleting ? {} : prepareMigrationValues(record, annotations[record.id] || null);
+			Object.keys(record._migrateRelationshipRemap || {}).forEach(function (name) {
+				if (record._migrateRelationshipRemap[name] !== name) {
+					var staleKey = _valueKey(patch, name);
+					if (staleKey) delete patch[staleKey];
+				}
+			});
 			delete patch.attributes;
 			delete patch.Id;
 			// Matched records keep destination relationships that Salesforce cannot update.
@@ -769,6 +875,8 @@
 				associations.splice(k, 1);
 			}
 		}
+		if (Array.isArray(originalAssociations))
+			originalAssociations.splice(0, originalAssociations.length, ...associations);
 		return {
 			updates: updates,
 			deletes: deletes,
@@ -781,6 +889,8 @@
 	var api = {
 		isMigrationDelete: isMigrationDelete,
 		exclusionIssues: exclusionIssues,
+		relationshipIssues: relationshipIssues,
+		resolvedAssociations: resolvedAssociations,
 		computeMigrationStatus: computeMigrationStatus,
 		resolveTargetRecordTypeId: resolveTargetRecordTypeId,
 		picklistValuesForRecordType: picklistValuesForRecordType,

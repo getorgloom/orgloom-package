@@ -30,6 +30,8 @@
 				return !!(_caps && _caps[name]);
 			}
 			function _canAuthorSlots() {
+				const supported = window.OrgLoom.platform?.recordRequests;
+				if (supported === false) return false;
 				return _hasCap('create-slot-canvas');
 			}
 			function _canRunScripts() {

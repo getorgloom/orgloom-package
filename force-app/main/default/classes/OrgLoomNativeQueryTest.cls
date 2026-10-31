@@ -2,7 +2,7 @@
     @TestSetup static void setup() {
         User actor=new User(ProfileId=UserInfo.getProfileId(),Username='native-query-'+System.now().getTime()+'@example.invalid',Email='native-query@example.invalid',Alias='naquery',LastName='Native Query Test',TimeZoneSidKey='America/Phoenix',LocaleSidKey='en_US',EmailEncodingKey='UTF-8',LanguageLocaleKey='en_US');insert actor;
 
-        OrgLoomAccessFixture.grant(actor,new Set<String>{'Access','soql-import','bulk-edit-records','export-canvas','export-records'});
+        OrgLoomAccessFixture.grant(actor,new Set<String>{'Access','soql-import','bulk-edit-records','export-canvas'});
     }
     private static Map<String,Object> query(String soql) { return (Map<String,Object>)OrgLoomNativeQuery.run(new Map<String,Object>{'soql'=>soql}); }
     @IsTest static void hydratesChildRecordsAndRelationships() {

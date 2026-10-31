@@ -559,7 +559,7 @@
 				const overlay = document.createElement('div');
 				overlay.className = 'modal migrate-match-modal';
 				overlay.innerHTML =
-					'<div class="modal-overlay" data-mm-close></div>' +
+					'<div class="modal-overlay"></div>' +
 					'<div class="modal-body mm-modal-body">' +
 					'<div class="modal-header">' +
 					'<h3>Prepare migration</h3>' +
@@ -624,16 +624,13 @@
 				};
 				const onEsc = (e) => {
 					if (e.key === 'Escape') {
-						if (applying) {
-							e.preventDefault();
-							e.stopImmediatePropagation();
-							return;
-						}
-						cleanup();
+						// Dismissing a migration discards its review choices; require the close button.
+						e.preventDefault();
+						e.stopImmediatePropagation();
 					}
 				};
 				document.addEventListener('keydown', onEsc, true);
-				overlay.querySelectorAll('[data-mm-close]').forEach((el) => el.addEventListener('click', cleanup));
+				overlay.querySelector('button[data-mm-close]').addEventListener('click', cleanup);
 
 				const summaryEl = overlay.querySelector('.mm-summary');
 				const decisionsEl = overlay.querySelector('.mm-record-decisions');
@@ -646,6 +643,8 @@
 				const reviewedRequiredFields = new Map();
 				const pendingFieldMaps = new Map();
 				const resolvedFieldMaps = new Map();
+				const reviewedChoiceIssues = new Map();
+				const differenceOrder = new Map();
 				_allRecords().forEach((rec, recordIndex) => {
 					const stored = rec && rec._migrateFieldResolutions;
 					if (!stored || typeof stored !== 'object') {
@@ -770,6 +769,7 @@
 						_renderFinalReview();
 					}
 					_recomputeSummary();
+					overlay.querySelector('.modal-content').scrollTop = 0;
 				}
 
 				function _preferredKeyForRecord(rec) {
@@ -958,8 +958,16 @@
 					const dependencies = engine.exclusionIssues(
 						rec,
 						_allRecords(),
-						canvasState.bulkAssociations,
+						engine.resolvedAssociations(_allRecords(), canvasState.bulkAssociations),
 						canvasState.describeCache,
+					);
+					dependencies.push(
+						...engine.relationshipIssues(
+							rec,
+							_allRecords(),
+							canvasState.bulkAssociations,
+							canvasState.describeCache,
+						),
 					);
 					return dependencies.length
 						? { ...annotation, status: 'blocked', issues: annotation.issues.concat(dependencies) }
@@ -1391,6 +1399,81 @@
 
 				function _differenceIssueHtml(rec, issue, recordIndex) {
 					const fieldLabel = (_fieldFor(rec, issue.field) || {}).label || issue.field || 'Destination field';
+					if (issue.kind === 'boolean-mismatch') {
+						const value = _lookup(rec.values, issue.field);
+						const resolved = typeof value === 'boolean';
+						return _fieldDifferenceRow(
+							fieldLabel,
+							issue.sourceValue,
+							resolved ? 'Checkbox value selected' : issue.message,
+							'<select data-mm-boolean-record="' +
+								recordIndex +
+								'" data-mm-boolean-field="' +
+								escapeHtml(issue.field) +
+								'" aria-label="Destination checkbox value for ' +
+								escapeHtml(fieldLabel) +
+								'">' +
+								'<option value="">Choose True or False...</option>' +
+								'<option value="true"' +
+								(value === true ? ' selected' : '') +
+								'>True (checked)</option>' +
+								'<option value="false"' +
+								(value === false ? ' selected' : '') +
+								'>False (unchecked)</option></select>',
+							resolved,
+						);
+					}
+					if (issue.kind === 'relationship-mismatch') {
+						const mappings = rec._migrateRelationshipRemap || {};
+						const selected = Object.prototype.hasOwnProperty.call(mappings, issue.field)
+							? mappings[issue.field]
+							: '__original__';
+						const fields = (canvasState.describeCache[rec.objectName] || {}).fields || [];
+						const candidates = fields.filter(
+							(field) =>
+								field.type === 'reference' &&
+								(field.referenceTo || []).includes(issue.parentObject) &&
+								(rec._migrateMatchedId ? field.updateable : field.createable) !== false,
+						);
+						const problem = _annotationFor(rec).issues.find(
+							(item) => item.kind === issue.kind && item.field === issue.field,
+						);
+						const parent = _allRecords().find((item) => String(item.id) === String(issue.parentId));
+						const control =
+							'<select data-mm-relationship-record="' +
+							recordIndex +
+							'" data-mm-relationship-field="' +
+							escapeHtml(issue.field) +
+							'" aria-label="Destination lookup for ' +
+							escapeHtml(issue.field) +
+							'">' +
+							'<option value="__original__">Choose destination lookup...</option>' +
+							'<option value=""' +
+							(selected === '' ? ' selected' : '') +
+							">Don't map (destination unchanged)</option>" +
+							candidates
+								.map(
+									(field) =>
+										'<option value="' +
+										escapeHtml(field.name) +
+										'"' +
+										(selected === field.name ? ' selected' : '') +
+										'>' +
+										escapeHtml(field.label || field.name) +
+										'</option>',
+								)
+								.join('') +
+							'</select>';
+						return _fieldDifferenceRow(
+							fieldLabel,
+							parent ? _differenceRecordLabel(parent) : issue.parentObject,
+							problem ? problem.message : 'Relationship reviewed',
+							selected === '' ? 'Not mapped' : escapeHtml(issue.parentObject),
+							!problem,
+							'',
+							control,
+						);
+					}
 					if (issue.kind === 'missing-field') {
 						const mapKey = _fieldMapKey(recordIndex, issue.field);
 						const resolvedMap = resolvedFieldMaps.get(mapKey);
@@ -1473,13 +1556,16 @@
 						);
 					}
 					if (issue.kind === 'recordtype-unresolved') {
+						const selectedType = rec._migrateClearRecordType ? '__clear__' : rec._migrateRecordTypeId;
 						const describe = canvasState.describeCache[rec.objectName] || {};
 						const options = (describe.recordTypes || [])
 							.map(
 								(type) =>
 									'<option value="' +
 									escapeHtml(type.id) +
-									'">' +
+									'"' +
+									(selectedType === type.id ? ' selected' : '') +
+									'>' +
 									escapeHtml(type.label || type.name || type.developerName) +
 									'</option>',
 							)
@@ -1487,34 +1573,42 @@
 						return _fieldDifferenceRow(
 							'Record type',
 							issue.developerName,
-							'Record type unavailable',
+							selectedType ? 'Record type selected' : 'Record type unavailable',
 							'<select class="mm-difference-input" aria-label="Destination record type" data-mm-recordtype-record="' +
 								recordIndex +
 								'"><option value="">Choose a destination record type...</option>' +
 								options +
-								'<option value="__clear__">No record type</option></select>',
-							false,
+								'<option value="__clear__"' +
+								(selectedType === '__clear__' ? ' selected' : '') +
+								'>No record type</option></select>',
+							Boolean(selectedType),
 						);
 					}
 					if (issue.kind === 'picklist-mismatch') {
 						const field = _fieldFor(rec, issue.field) || {};
-						const options = _picklistValuesForRecordType(field, _effectiveRecordTypeId(rec))
-							.filter((value) => value && value.active !== false)
-							.map(
-								(value) =>
-									'<option value="' +
-									escapeHtml(value.value) +
-									'">' +
-									escapeHtml(value.label || value.value) +
-									'</option>',
-							)
-							.join('');
+						const optionsFor = (selected) =>
+							_picklistValuesForRecordType(field, _effectiveRecordTypeId(rec))
+								.filter((value) => value && value.active !== false)
+								.map(
+									(value) =>
+										'<option value="' +
+										escapeHtml(value.value) +
+										'"' +
+										(selected === value.value ? ' selected' : '') +
+										'>' +
+										escapeHtml(value.label || value.value) +
+										'</option>',
+								)
+								.join('');
 						return (issue.invalidValues || [])
-							.map((sourceValue) =>
-								_fieldDifferenceRow(
+							.map((sourceValue) => {
+								const remap = rec._migratePicklistRemap?.[issue.field] || {};
+								const resolved = Object.prototype.hasOwnProperty.call(remap, sourceValue);
+								const selected = resolved ? remap[sourceValue] : undefined;
+								return _fieldDifferenceRow(
 									fieldLabel,
 									sourceValue,
-									'Value unavailable',
+									resolved ? 'Value reviewed' : 'Value unavailable',
 									'<select class="mm-difference-input" aria-label="Destination value for ' +
 										escapeHtml(fieldLabel) +
 										' (' +
@@ -1527,11 +1621,13 @@
 										escapeHtml(sourceValue) +
 										'">' +
 										'<option value="__unresolved__">Omit on upload</option>' +
-										options +
-										'<option value="__drop__">Don\'t map this value</option></select>',
-									false,
-								),
-							)
+										optionsFor(selected) +
+										'<option value="__drop__"' +
+										(selected === '' ? ' selected' : '') +
+										">Don't map this value</option></select>",
+									resolved,
+								);
+							})
 							.join('');
 					}
 					return '';
@@ -1560,7 +1656,86 @@
 					const recordGroups = [];
 					all.forEach((rec, recordIndex) => {
 						const annotation = _annotationFor(rec);
-						const issues = annotation.issues || [];
+						const currentIssues = annotation.issues || [];
+						const order = differenceOrder.get(rec) || new Map();
+						const issueKey = (issue) =>
+							(issue.kind === 'required-reviewed' ? 'required-unfilled' : issue.kind) +
+							':' +
+							String(issue.field || '').toLowerCase();
+						currentIssues.forEach((issue) => {
+							const key = issueKey(issue);
+							if (!order.has(key)) order.set(key, order.size);
+						});
+						differenceOrder.set(rec, order);
+						const remembered = reviewedChoiceIssues.get(rec) || new Map();
+						currentIssues.forEach((issue) => {
+							if (
+								![
+									'picklist-mismatch',
+									'recordtype-unresolved',
+									'relationship-mismatch',
+									'boolean-mismatch',
+								].includes(issue.kind)
+							)
+								return;
+							const key = issue.kind + ':' + issue.field;
+							const previous = remembered.get(key);
+							remembered.set(key, {
+								...issue,
+								invalidValues: Array.from(
+									new Set([...(previous?.invalidValues || []), ...(issue.invalidValues || [])]),
+								),
+							});
+						});
+						// Keep editable choices after annotation stops reporting them as problems.
+						reviewedChoiceIssues.set(rec, remembered);
+						const issues = currentIssues.filter(
+							(issue) =>
+								![
+									'picklist-mismatch',
+									'recordtype-unresolved',
+									'relationship-mismatch',
+									'boolean-mismatch',
+								].includes(issue.kind),
+						);
+						issues.push(...remembered.values());
+						_resolvedFieldMapsForRecord(recordIndex).forEach(([, resolved]) => {
+							if (
+								!issues.some(
+									(issue) =>
+										issue.kind === 'missing-field' &&
+										_fieldMapKey(recordIndex, issue.field) ===
+											_fieldMapKey(recordIndex, resolved.sourceField),
+								)
+							) {
+								issues.push({
+									kind: 'missing-field',
+									field: resolved.sourceField,
+									severity: 'resolved',
+								});
+							}
+						});
+						reviewedRequiredFields.forEach((reviewed) => {
+							const value = _lookup(rec.values, reviewed.field);
+							if (
+								reviewed.recordIndex === recordIndex &&
+								!rec._migrateMatchedId &&
+								value != null &&
+								value !== '' &&
+								!issues.some(
+									(issue) =>
+										issue.kind === 'required-unfilled' &&
+										issue.field.toLowerCase() === reviewed.field.toLowerCase(),
+								)
+							) {
+								issues.push({ kind: 'required-reviewed', field: reviewed.field, severity: 'resolved' });
+							}
+						});
+						issues.forEach((issue) => {
+							const key = issueKey(issue);
+							if (!order.has(key)) order.set(key, order.size);
+						});
+						issues.sort((a, b) => order.get(issueKey(a)) - order.get(issueKey(b)));
 						const rows = [];
 						let attentionCount = 0;
 						if (rec._migrateExcluded) {
@@ -1592,7 +1767,6 @@
 								),
 							);
 						} else {
-							const renderedMapKeys = new Set();
 							issues.forEach((issue) => {
 								if (issue.kind === 'excluded-relationship') {
 									attentionCount++;
@@ -1611,49 +1785,16 @@
 								}
 								const key =
 									issue.kind === 'missing-field' ? _fieldMapKey(recordIndex, issue.field) : null;
-								if (key) renderedMapKeys.add(key);
 								const markup = _differenceIssueHtml(rec, issue, recordIndex);
 								if (markup) {
 									rows.push(markup);
-									if (!key || !resolvedFieldMaps.has(key)) attentionCount++;
-								}
-							});
-							_resolvedFieldMapsForRecord(recordIndex).forEach(([key, resolved]) => {
-								if (!renderedMapKeys.has(key)) {
-									rows.push(
-										_differenceIssueHtml(
-											rec,
-											{
-												kind: 'missing-field',
-												field: resolved.sourceField,
-												severity: 'resolved',
-											},
-											recordIndex,
-										),
-									);
-								}
-							});
-							const activeRequiredFields = new Set(
-								issues
-									.filter((issue) => issue.kind === 'required-unfilled')
-									.map((issue) => String(issue.field).toLowerCase()),
-							);
-							reviewedRequiredFields.forEach((reviewed) => {
-								const value = _lookup(rec.values, reviewed.field);
-								if (
-									reviewed.recordIndex === recordIndex &&
-									!rec._migrateMatchedId &&
-									!activeRequiredFields.has(String(reviewed.field).toLowerCase()) &&
-									value != null &&
-									value !== ''
-								) {
-									rows.push(
-										_differenceIssueHtml(
-											rec,
-											{ kind: 'required-reviewed', field: reviewed.field, severity: 'resolved' },
-											recordIndex,
-										),
-									);
+									if (
+										(!key || !resolvedFieldMaps.has(key)) &&
+										currentIssues.some(
+											(active) => active.kind === issue.kind && active.field === issue.field,
+										)
+									)
+										attentionCount++;
 								}
 							});
 						}
@@ -1731,6 +1872,18 @@
 							});
 						});
 
+					differencesEl.querySelectorAll('[data-mm-relationship-record]').forEach((select) => {
+						select.addEventListener('change', () => {
+							if (applying) return;
+							const rec = all[Number(select.getAttribute('data-mm-relationship-record'))];
+							const field = select.getAttribute('data-mm-relationship-field');
+							if (!rec || !field) return;
+							rec._migrateRelationshipRemap = rec._migrateRelationshipRemap || {};
+							if (select.value === '__original__') delete rec._migrateRelationshipRemap[field];
+							else rec._migrateRelationshipRemap[field] = select.value;
+							_afterDifferenceDecision();
+						});
+					});
 					differencesEl.querySelectorAll('[data-mm-field-resolution]').forEach((select) => {
 						select.addEventListener('change', () => {
 							const row = select.closest('[data-mm-missing-record]');
@@ -1805,6 +1958,17 @@
 								return;
 							}
 							_commitFieldResolution(recordIndex, rec, sourceField, sourceKey, targetField, select.value);
+							_afterDifferenceDecision();
+						});
+					});
+					differencesEl.querySelectorAll('[data-mm-boolean-record]').forEach((control) => {
+						control.addEventListener('change', () => {
+							if (applying) return;
+							const rec = all[Number(control.getAttribute('data-mm-boolean-record'))];
+							const field = control.getAttribute('data-mm-boolean-field');
+							const issue = reviewedChoiceIssues.get(rec)?.get('boolean-mismatch:' + field);
+							if (!rec || !issue) return;
+							rec.values[field] = control.value === '' ? issue.sourceValue : control.value === 'true';
 							_afterDifferenceDecision();
 						});
 					});
@@ -2103,16 +2267,13 @@
 				}
 
 				function _decisionRow(rec, index, all) {
-					if (rec._migrateExcluded) {
-						return (
-							'<tr><td><strong class="mm-record-identity">' +
-							escapeHtml(_differenceRecordLabel(rec)) +
-							'</strong></td><td>Excluded</td><td>Open Fields to include it again.</td></tr>'
-						);
-					}
 					const destinationSearch = _destinationSearchState(rec);
 					const pending = pendingMatches.has(rec);
-					const action = rec._migrateMatchedId || rec._migrateMatchIntent === 'existing' ? 'existing' : 'new';
+					const action = rec._migrateExcluded
+						? 'exclude'
+						: rec._migrateMatchedId || rec._migrateMatchIntent === 'existing'
+							? 'existing'
+							: 'new';
 					const needsDecision = action === 'existing' && !rec._migrateMatchedId;
 					let badge = '';
 					if (pending) {
@@ -2218,8 +2379,16 @@
 						'><span>' +
 						(rec.pendingDelete ? 'Delete existing' : 'Update existing') +
 						'</span></label>' +
+						'<label><input class="mm-action-radio" type="radio" name="mm-action-' +
+						index +
+						'" value="exclude"' +
+						(action === 'exclude' ? ' checked' : '') +
+						'><span>Exclude</span></label>' +
 						'</fieldset></td><td>' +
 						searchMessage +
+						(action === 'exclude'
+							? '<span class="mm-new-destination">Not included in this migration</span>'
+							: '') +
 						(action === 'new' ? '<span class="mm-new-destination">New record</span>' : '') +
 						'<fieldset class="mm-target-controls"' +
 						(pending ? ' disabled' : '') +
@@ -2286,6 +2455,7 @@
 						card.querySelectorAll('.mm-action-radio').forEach((radio) => {
 							radio.addEventListener('change', () => {
 								if (!radio.checked) return;
+								if (applying) return;
 								const restoreActionFocus = () =>
 									decisionsEl
 										.querySelector(
@@ -2294,6 +2464,14 @@
 												'"] .mm-action-radio:checked',
 										)
 										?.focus({ preventScroll: true });
+								rec._migrateExcluded = radio.value === 'exclude';
+								if (rec._migrateExcluded) {
+									delete rec._migrateMatchedId;
+									delete rec.loadedFromId;
+									_afterRecordDecision();
+									restoreActionFocus();
+									return;
+								}
 								if (radio.value === 'new') {
 									_resolveRecord(rec, 'new', all);
 									delete rec._migrateMatchSearchError;

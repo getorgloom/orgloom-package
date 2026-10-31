@@ -227,10 +227,12 @@
 					'<span class="ccm-label">Add record here</span>' +
 					'<span class="ccm-sub">Drop a pending placeholder at the click point</span>' +
 					'</button>' +
-					'<button type="button" class="ccm-item" data-ccm-action="request">' +
-					'<span class="ccm-label">Request record here</span>' +
-					'<span class="ccm-sub">Ask a teammate to create or choose a record</span>' +
-					'</button>';
+					(window.OrgLoom.platform?.recordRequests === false
+						? ''
+						: '<button type="button" class="ccm-item" data-ccm-action="request">' +
+							'<span class="ccm-label">Request record here</span>' +
+							'<span class="ccm-sub">Ask a teammate to create or choose a record</span>' +
+							'</button>');
 				document.body.appendChild(menu);
 				const cleanup = () => {
 					if (menu.parentNode) {
@@ -294,7 +296,9 @@
 				pop.innerHTML =
 					'<div class="fm-header">On the canvas</div>' +
 					'<button type="button" data-add-menu="blank" title="Add an empty draft and choose its object type">Add a blank record</button>' +
-					'<button type="button" data-add-menu="request" title="Ask a teammate to create or choose a record">Request a record</button>' +
+					(window.OrgLoom.platform?.recordRequests === false
+						? ''
+						: '<button type="button" data-add-menu="request" title="Ask a teammate to create or choose a record">Request a record</button>') +
 					'<div class="fm-header">From Salesforce</div>' +
 					'<button type="button" data-add-menu="browse" title="Filter records by field values, see live counts, then load matches onto the canvas, no SOQL knowledge required">Browse records</button>' +
 					'<button type="button" data-add-menu="soql" title="Write a SOQL SELECT to pull records (and their related children via subqueries) into the canvas">Import via SOQL query</button>' +
@@ -560,6 +564,22 @@
 								_refreshSubtitle +
 								'</span></button>';
 				}
+				let deleteItem = '';
+				if (canEditCanvasStructure() && deps.bulkDeleteCandidates && deps.openBulkDeleteFlow) {
+					const count = (deps.bulkDeleteCandidates() || []).length;
+					const selected = canvasState.bulkSelectedIds?.size > 0;
+					const subtitle = count
+						? count + (selected ? ' selected' : ' loaded')
+						: selected
+							? 'No eligible records in selection'
+							: 'No eligible records on canvas';
+					deleteItem =
+						'<button type="button" data-bulk-op="mark-delete"' +
+						(count ? '' : ' disabled aria-disabled="true"') +
+						' title="Mark loaded Salesforce records for deletion on the next upload.">Mark for deletion <span class="tag">' +
+						subtitle +
+						'</span></button>';
+				}
 				const _migrateHasRecords = canvasState.bulkRecords.some((r) => !r.isTypeNode);
 				const migration = window.OrgLoom.platform?.migration || {};
 				const migrationLabel = escapeHtml(migration.label || 'Migrate to another org…');
@@ -589,6 +609,7 @@
 					diffItem +
 					'<div class="fm-header">Salesforce</div>' +
 					_refreshItem +
+					deleteItem +
 					_migrateItem;
 				document.body.appendChild(pop);
 				const cleanup = () => {
@@ -620,6 +641,8 @@
 							openFindDuplicatesModal();
 						} else if (op === 'refresh-sf') {
 							openBulkRefreshFlow();
+						} else if (op === 'mark-delete') {
+							deps.openBulkDeleteFlow();
 						} else if (op === 'migrate-org') {
 							beginMigration();
 						} else if (op === 'diff') {

@@ -13,7 +13,8 @@
   }
   function fail(error){
     retryAt=Date.now()+30000;
-    notice('Refresh recovery unavailable. Save before refreshing. '+error.message,true);
+    const oversized=/save and recovery limit|too large for this native build/.test(error.message);
+    notice('Refresh recovery unavailable. '+(oversized?'Export this canvas as JSON before refreshing. ':'Save before refreshing. ')+error.message,true);
     if(String(error.message).includes('RECOVERY_STALE:')){stopped=true;host.end('This recovery session is no longer current. '+error.message.replace('RECOVERY_STALE: ',''));}
   }
   async function retire(){
@@ -56,28 +57,62 @@
       });
     }catch(error){fail(error);}
   }
+  async function openLatest(info){
+    notice('The previous recovery checkpoint is no longer current. Opening the latest saved canvas.');
+    try{
+      // Normal open retains role checks and explicit takeover confirmation.
+      // A stale checkpoint must never reclaim somebody else's editing lease.
+      const data=await host.openSaved(info.canvasId);
+      host.setKey(null);key=null;sequence=0;snapshotContext=null;
+      await context.restore(data,{saved:true});
+      const value=snapshot();confirmed=value?JSON.stringify(value):'';observed=confirmed;
+      stopped=false;started=true;
+      notice('Opened the latest saved canvas. Unsaved changes from the previous session were not restored.');
+      return true;
+    }catch(error){
+      stopped=true;
+      if(/takeover cancelled/i.test(error.message)){
+        host.setKey(null);key=null;stopped=false;
+        notice('Canvas remains open in the other session. Open it from Canvases when you are ready.');
+      }else{
+        notice('Could not open the saved canvas. '+error.message,true);
+        const retry=document.createElement('button');retry.type='button';retry.textContent='Retry';
+        retry.onclick=()=>openLatest(info);status.append(retry);
+      }
+      return false;
+    }
+  }
   const api=window.OrgLoomNativeRecovery={
     ready:()=>ready,
     async mount(value){
       context=value;
       const mask=document.createElement('div');mask.id='native-recovery-loading';mask.textContent='Checking for unsaved work…';document.body.append(mask);
-      let restored=false;
+      let restored=false,handledSavedCanvas=false;
       try{
         await context.ready;
         key=host.getKey();
         if(key&&!/^[a-f0-9]{64}$/.test(key)){key=null;host.setKey(null);}
         if(key){
           const info=await host.request('peek',{key});
-          if(info.available){
+          if(info.stale&&info.canvasId){
+            handledSavedCanvas=true;restored=await openLatest(info);
+          }else if(info.available){
             const yes=await context.confirm({title:'Restore unsaved work?',message:'A recovery checkpoint from '+new Date(info.savedAt).toLocaleString()+' is available for this tab. Restore it?\n\nIf this tab was duplicated, continuing here ends editing in the other session. Only changes in the last successful checkpoint can be recovered.',confirmLabel:'Restore',cancelLabel:'Discard'});
             sequence=Number(info.sequence);
             if(yes){
-              const data=await host.request('restore',{key,writer,sequence});host.adopt(data);
-              await context.restore(data);restored=true;
-              const current=snapshot();snapshotContext=current?current.contextId+':'+(current.versionId||''):null;
-              confirmed=current?JSON.stringify(current):'';
-              context.toast('Restored your last recovery checkpoint. Review your changes before uploading.','info');
-              notice('Unsaved work restored');
+              try{
+                const data=await host.request('restore',{key,writer,sequence});host.adopt(data);
+                await context.restore(data);restored=true;
+                const current=snapshot();snapshotContext=current?current.contextId+':'+(current.versionId||''):null;
+                confirmed=current?JSON.stringify(current):'';
+                context.toast('Restored your last recovery checkpoint. Review your changes before uploading.','info');
+                notice('Unsaved work restored');
+              }catch(error){
+                // A takeover can happen while the Restore dialog is open.
+                if(info.canvasId&&String(error.message).includes('RECOVERY_STALE:')){
+                  handledSavedCanvas=true;restored=await openLatest(info);
+                }else throw error;
+              }
             }else{
               await host.request('discard',{key,writer,sequence,reviewed:true});host.setKey(null);key=null;
             }
@@ -88,7 +123,7 @@
         // Do not overwrite a checkpoint when its lookup/restore failed. Keep the
         // pointer so a later refresh can retry after connectivity is restored.
         stopped=true;notice('Recovery could not be restored. '+error.message+' Save any new work before refreshing.',true);
-      }finally{mask.remove();resolveReady(restored);}
+      }finally{mask.remove();resolveReady(restored||handledSavedCanvas);}
       setInterval(tick,2000);
       document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')void tick();});
     },
@@ -97,12 +132,18 @@
       await serialize(retire);notice('Recovery draft discarded');
     },
     async beforeSave(){savePaused=true;await queue;},
+    async requestSaved(){
+      // Preserve all local edits in a checkpoint tied to the new saved revision.
+      try{if(started&&!stopped){const value=snapshot();if(value)await serialize(()=>checkpoint(value,JSON.stringify(value)));}}
+      catch(error){fail(error);}
+      finally{savePaused=false;}
+    },
     captureSaved(){
       if(!started||stopped)return;
       // Called by the shared save-state model after applying a confirmed save
       // or open. New edits made after this instant still differ from baseline.
       const value=snapshot(),baseline=value?JSON.stringify(value):'';
-      void serialize(async()=>{if(key)await retire();confirmed=baseline;observed=baseline;notice('Canvas saved · recovery starts with your next edit');}).catch(fail);
+      void serialize(async()=>{if(key)await retire();confirmed=baseline;observed=baseline;if(status){status.remove();status=null;}}).catch(fail);
     },
     async saved(success=true){
       try{if(success&&key)await serialize(retire);}catch(error){notice('Saved, but the old recovery checkpoint could not be removed. '+error.message,true);}

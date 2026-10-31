@@ -23,7 +23,11 @@ function harness({
 	let capabilityRefreshes = 0;
 	let confirmations = 0;
 	let lastConfirmation = null;
-	const state = { bulkRecords: records || [], bulkAssociations: associations, describeCache: { ...describes } };
+	// Existing fixtures represent writable fields unless they override permissions.
+ const describedFields = Object.fromEntries(Object.entries(describes).map(([name, describe]) => [name, {
+   ...describe, fields: describe.fields.map(field => ({ createable: true, updateable: true, ...field })),
+ }]));
+ const state = { bulkRecords: records || [], bulkAssociations: associations, describeCache: describedFields };
 	const window = {};
 	vm.runInNewContext(source, { window, Map, Set, Promise, JSON, Number });
 	const api = window.OrgLoom.bulkAutofill.mount({
@@ -97,7 +101,7 @@ test('native auto-fill does not apply after the canvas or session changes while 
     if(transition==='records')h.state.bulkRecords=[];
     if(transition==='session')canEdit=false;
     finish();await pending;
-    assert.deepEqual(record.values,{});
+    assert.deepEqual({ ...record.values },{});
     assert.match(h.toasts.at(-1).message,/session changed/);
   }
 });
@@ -193,7 +197,7 @@ test('Auto-fill changes nothing when permission is revoked before execution', as
 	});
 
 	assert.equal(await result.api.bulkAutoFill('required', 'both', { silent: true }), false);
-	assert.deepEqual(record.values, {});
+	assert.deepEqual({ ...record.values }, {});
 	assert.equal(result.capabilityRefreshes, 1);
 	assert.match(result.toasts.at(-1).message, /Ask an admin to grant Auto-fill permission/);
 });
@@ -232,3 +236,39 @@ test('draft-only clear can skip confirmation after review while loaded-record cl
 	assert.doesNotMatch(result.lastConfirmation.message, /What this does|Wipe every field value|Undo/);
 });
 
+
+for (const objectName of ['Account', 'Contact']) {
+ test(objectName + ' auto-fill skips PhotoUrl and other non-writable fields in preview and values', async () => {
+  const record = { id: 1, objectName, values: {} };
+  const fields = [
+   { name: 'Name', type: 'string', createable: true, updateable: true },
+   { name: 'PhotoUrl', type: 'url', createable: false, updateable: false },
+   { name: 'Formula__c', calculated: true },
+   { name: 'Sequence__c', autoNumber: true },
+   { name: 'Unknown__c', createable: undefined, updateable: undefined },
+   { name: 'ReadOnlyLookup__c', type: 'reference', createable: false, updateable: false },
+  ];
+  const { api } = harness({ records: [record], describes: { [objectName]: { fields } }, getSmartDefault: () => '005000000000001AAA' });
+  assert.equal(api.summarizeAutoFillTargets([record], 'all', 'both').fillableFields, 1);
+  assert.equal(api.summarizeAutoFillTargets([record], 'all', 'both').unresolvedRelationships, 0);
+  await settleFill(api);
+  assert.deepEqual({ ...record.values }, { Name: 'sample-Name' });
+ });
+}
+test('auto-fill uses create permissions for drafts and update permissions for loaded records', async () => {
+ const draft = { id: 1, objectName: 'Account', values: {} };
+ const loaded = { id: 2, objectName: 'Account', loadedFromId: '001000000000001AAA', values: {} };
+ const { api } = harness({ records: [draft, loaded], describes: { Account: { fields: [
+  { name: 'CreateOnly__c', createable: true, updateable: false },
+  { name: 'UpdateOnly__c', createable: false, updateable: true },
+ ] } } });
+ await api.bulkAutoFill('all', 'both', { silent: true, includeLoaded: true });
+ assert.deepEqual({ ...draft.values }, { CreateOnly__c: 'sample-CreateOnly__c' });
+ assert.deepEqual({ ...loaded.values }, { UpdateOnly__c: 'sample-UpdateOnly__c' });
+});
+test('auto-fill cannot set User.IsActive without write permission', async () => {
+ const record = { id: 1, objectName: 'User', values: {} };
+ const { api } = harness({ records: [record], describes: { User: { fields: [{ name: 'IsActive', createable: false, updateable: false }] } } });
+ await settleFill(api);
+ assert.deepEqual({ ...record.values }, {});
+});

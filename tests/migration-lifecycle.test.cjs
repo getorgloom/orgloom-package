@@ -26,3 +26,30 @@ test('migration applies destination data only after explicit commit and fresh ca
   assert.equal(h.applied.length,1);assert.equal(h.applied[0]._meta.exportedFrom,'destination');assert.equal(h.applied[0].records[0].values.Id,undefined);
   assert.equal(h.requests.filter(url=>url==='/api/capabilities/bulk-edit-records/check').length,2);
 });
+
+test('migration shows loading throughout metadata requests, then removes it before review',async()=>{
+  const h=migrationHarness(false);
+  let release,busy=false,opened=false;
+  const describe=new Promise(resolve=>{release=resolve;});
+  const fetch=h.window.fetch;
+  h.window.fetch=async url=>{if(url.includes('/describe'))await describe;return fetch(url);};
+  h.window.OrgLoom.migrateMatch.mount=()=>({open:({onClose})=>{
+    assert.equal(busy,false,'loading mask must not block the review');opened=true;onClose();
+  }});
+  const importing=h.window.OrgLoomNativeMigration.start({records:[{id:1,objectName:'Account',values:{Name:'Test'}}],associations:[]},{},h.apply,message=>{
+    assert.equal(message,'Preparing migration review…');busy=true;return()=>{busy=false;};
+  });
+  assert.equal(busy,true);assert.equal(opened,false);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(busy,true);release();await importing;
+  assert.equal(opened,true);assert.equal(busy,false);assert.equal(h.applied.length,0);
+});
+
+test('failed migration preparation clears loading without replacing the canvas',async()=>{
+  const h=migrationHarness(false);let busy=false;
+  h.window.fetch=async()=>{throw Error('Access unavailable');};
+  await assert.rejects(h.window.OrgLoomNativeMigration.start({records:[],associations:[]},{},h.apply,()=>{
+    busy=true;return()=>{busy=false;};
+  }),/Access unavailable/);
+  assert.equal(busy,false);assert.equal(h.applied.length,0);
+});

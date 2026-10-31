@@ -507,7 +507,6 @@
 			'bulk-edit-records': true,
 			'auto-fill-records': true,
 			'export-canvas': true,
-			'export-records': true,
 			'receive-canvas': true,
 			'filter-orgs': true,
 			'generate-records-with-ai': true,

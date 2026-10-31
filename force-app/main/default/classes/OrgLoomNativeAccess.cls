@@ -8,10 +8,11 @@ public with sharing class OrgLoomNativeAccess {
         String ns=packageNamespace();return ns==null?name:ns+'__'+name;
     }
     // Implementation availability is code-owned; neither metadata nor grants enable unfinished features.
-    public static final Set<String> IMPLEMENTED = new Set<String>{'browse-records','soql-import','upload-records','bulk-edit-records','save-canvas','open-saved-canvas','export-canvas','export-records','share-canvas','receive-canvas','create-slot-canvas','view-activity-history','recall-upload','run-script','auto-fill-records'};
+    public static final Set<String> IMPLEMENTED = new Set<String>{'browse-records','soql-import','upload-records','bulk-edit-records','save-canvas','open-saved-canvas','export-canvas','share-canvas','receive-canvas','create-slot-canvas','view-activity-history','recall-upload','run-script','auto-fill-records'};
     public static Map<String,OrgLoomNativeFeature__mdt> features() {
         Map<String,OrgLoomNativeFeature__mdt> result=new Map<String,OrgLoomNativeFeature__mdt>();
-        for(OrgLoomNativeFeature__mdt f:OrgLoomNativeFeature__mdt.getAll().values()) result.put(f.Capability__c,f);
+        // Retain legacy packaged metadata for upgrades, but expose only one export grant.
+        for(OrgLoomNativeFeature__mdt f:OrgLoomNativeFeature__mdt.getAll().values()) if(f.Capability__c!='export-records')result.put(f.Capability__c,f);
         return result;
     }
     public static Boolean isAdmin() { return FeatureManagement.checkPermission('OrgLoomNative_Admin'); }
@@ -50,10 +51,12 @@ public with sharing class OrgLoomNativeAccess {
         return result;
     }
     public static void requireCapability(String capability) {
+        // Older CSV clients use this route; it must obey the combined grant and policy.
+        if(capability=='export-records')capability='export-canvas';
         requireAccess();
         OrgLoomNativeFeature__mdt f=features().get(capability);
         if(f==null || !IMPLEMENTED.contains(capability))throw new AccessDeniedException('This feature is not implemented in Org Loom yet.');
-        if(policies().get(capability)==false)throw new AccessDeniedException('Your administrator has disabled this feature for the org.');
+        if(policies().get(capability)==false)throw new AccessDeniedException('Your administrator has disabled '+f.MasterLabel+' for the org.');
         if(!OrgLoomFeatureAccess.currentGrants().contains(capability))throw new AccessDeniedException('Your administrator must grant access to '+f.MasterLabel+'.');
     }
 }

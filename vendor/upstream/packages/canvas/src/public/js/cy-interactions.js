@@ -255,6 +255,52 @@
 						onSelectionUpdate(hits, additive);
 					}
 				};
+				// Cytoscape may miss tapend when a release happens outside its
+				// iframe/webview. End the drag on document/window lifecycle events
+				// too, preserving the selection and stopping edge auto-panning.
+				const release = (event) => {
+					if (event.button != null && event.button !== 0) return;
+					if (marquee && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+						const rect = container.getBoundingClientRect();
+						marquee.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+					}
+					finish();
+				};
+				const recoverRelease = (event) => {
+					if (event.buttons === 0) finish();
+				};
+				const visibilityChanged = () => {
+					if (document.hidden) finish();
+				};
+				const leaveDocument = (event) => {
+					if (
+						!event.relatedTarget &&
+						(event.target === document || event.target === document.documentElement)
+					)
+						finish();
+				};
+				const listeners = [
+					[document, 'mouseup', release],
+					[document, 'pointerup', release],
+					[document, 'pointercancel', finish],
+					[document, 'mousemove', recoverRelease],
+					[document, 'pointermove', recoverRelease],
+					[document, 'mouseleave', leaveDocument],
+					[document, 'visibilitychange', visibilityChanged],
+					[window, 'blur', finish],
+					[window, 'pagehide', finish],
+				];
+				for (const [target, type, handler] of listeners) {
+					target.addEventListener(type, handler, true);
+				}
+				cy.on('destroy', () => {
+					stopAutoPan();
+					if (marquee) marquee.box.remove();
+					marquee = null;
+					for (const [target, type, handler] of listeners) {
+						target.removeEventListener(type, handler, true);
+					}
+				});
 				cy.on('tapstart', (evt) => {
 					if (evt.target !== cy) {
 						return;
@@ -269,6 +315,7 @@
 					if (getCanvasSpaceHeld()) {
 						return;
 					}
+					finish(); // A new gesture must never orphan an earlier box.
 					const rect = container.getBoundingClientRect();
 					const start = { x: oe.clientX - rect.left, y: oe.clientY - rect.top };
 					const pan = cy.pan();

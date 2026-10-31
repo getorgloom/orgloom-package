@@ -99,6 +99,12 @@
 			};
 
 			function capabilityActionState(capability, label) {
+				if (deps.canSaveOrExport?.() === false) {
+					return {
+						allowed: false,
+						title: 'Only the canvas owner or an editor can save or export this canvas',
+					};
+				}
 				if (!isCapabilityReady()) {
 					return { allowed: false, title: 'Checking ' + label + ' access' };
 				}
@@ -131,12 +137,13 @@
 			}
 
 			function showSaveMenu(triggerEl) {
+				if (deps.canSaveOrExport?.() === false) return;
 				const { pop, cleanup } = _openAnchoredPopup(triggerEl, 380);
 				const hasAny = canvasState.selectedObjects.length > 0;
 				const _hasRecords = canvasState.bulkRecords.some((r) => !r.isTypeNode);
 				const saveAccess = capabilityActionState('save-canvas', 'Save canvases');
-				const exportCanvasAccess = capabilityActionState('export-canvas', 'Export canvas as file');
-				const exportRecordsAccess = capabilityActionState('export-records', 'Export records as CSV');
+				const exportCanvasAccess = capabilityActionState('export-canvas', 'Export Canvases (CSV/JSON)');
+				const exportRecordsAccess = exportCanvasAccess;
 				const saveAttrs = actionAttributes(saveAccess, !hasAny, 'Add records to the canvas before saving');
 				const exportCanvasAttrs = actionAttributes(
 					exportCanvasAccess,
@@ -217,7 +224,7 @@
 						} else if (action === 'export-file') {
 							promptFileExport();
 						} else if (action === 'export-csv') {
-							if (requireCapability('export-records', 'Export records as CSV')) {
+							if (requireCapability('export-canvas', 'Export Canvases (CSV/JSON)')) {
 								openExportCsvModal();
 							}
 						}
@@ -348,6 +355,19 @@
 				}
 				if (canvasState.selectedObjects.length === 0) {
 					showBulkToast('Nothing to save: canvas is empty.', 'error');
+					return false;
+				}
+				const canvasToSave = canvasState.currentCanvas;
+				const confirmed = await showConfirmDialog({
+					title: 'Overwrite saved canvas?',
+					message:
+						'This will replace the previous save of \u201c' +
+						(canvasToSave.title || 'Untitled canvas') +
+						'\u201d in Salesforce Files with your current canvas.',
+					confirmLabel: 'Overwrite',
+					cancelLabel: 'Cancel',
+				});
+				if (!confirmed || canvasState.currentCanvas !== canvasToSave) {
 					return false;
 				}
 				let payload;
@@ -733,7 +753,7 @@
 			}
 
 			async function promptFileExport() {
-				if (!requireCapability('export-canvas', 'Export canvas as file')) {
+				if (!requireCapability('export-canvas', 'Export Canvases (CSV/JSON)')) {
 					return false;
 				}
 				const real = canvasState.bulkRecords.filter((r) => !r.isTypeNode);
@@ -752,6 +772,8 @@
 			}
 
 			async function verifyFileExportPermission(options = {}) {
+				if (deps.canSaveOrExport?.() === false)
+					return { allowed: false, message: 'Only the canvas owner or an editor can export this canvas.' };
 				const showError = options.showError !== false;
 				let response;
 				let data = {};
@@ -761,6 +783,8 @@
 						credentials: 'same-origin',
 					});
 					data = await response.json().catch(() => ({}));
+					if (deps.canSaveOrExport?.() === false)
+						return { allowed: false, message: 'Your canvas access changed. No file was downloaded.' };
 				} catch (_error) {
 					const message =
 						'Org Loom could not confirm your file export access. No file was downloaded. Try again.';
@@ -980,7 +1004,7 @@
 					const r = await csrfFetch('/api/canvas', { credentials: 'same-origin' });
 					const data = await r.json();
 					if (!r.ok) {
-						throw new Error((data && data.error) || 'HTTP ' + r.status);
+						throw new Error((data && (data.message || data.error)) || 'Please try again.');
 					}
 					const items = (data && data.items) || [];
 					const canOpenOwnedCanvases = data && data.canOpenOwnedCanvases !== false;
@@ -1299,7 +1323,9 @@
 					});
 				} catch (e) {
 					list.innerHTML =
-						'<div class="tpl-empty">Failed to load: ' + escapeHtml(e.message || String(e)) + '</div>';
+						'<div class="tpl-empty">Unable to load saved canvases. ' +
+						escapeHtml(e.message || String(e)) +
+						'</div>';
 				}
 			}
 

@@ -42,7 +42,7 @@ global with sharing class OrgLoomNativeController {
         return d;
     }
     public static Boolean supported(Schema.DescribeFieldResult f) {
-        return f.isAccessible() && !new Set<String>{'ADDRESS','LOCATION','BASE64','ENCRYPTEDSTRING','ANYTYPE','COMPLEXVALUE'}.contains(String.valueOf(f.getType()));
+        return f.isAccessible() && !new Set<String>{'ADDRESS','LOCATION','BASE64','ANYTYPE','COMPLEXVALUE'}.contains(String.valueOf(f.getType()));
     }
     private static Boolean editable(Schema.DescribeFieldResult f) {
         return supported(f) && f.isUpdateable() && !f.isCalculated() && !f.isAutoNumber();
@@ -90,8 +90,26 @@ global with sharing class OrgLoomNativeController {
         String kind=String.valueOf(f.getType());
         if(kind=='DATE')return Date.valueOf(String.valueOf(value));
         if(kind=='DATETIME')return JSON.deserialize(JSON.serialize(value),Datetime.class);
-        if(kind=='BOOLEAN')return (Boolean)value;
-        if(new Set<String>{'CURRENCY','DOUBLE','INTEGER','PERCENT','LONG'}.contains(kind))return Decimal.valueOf(String.valueOf(value));
+        if(kind=='BOOLEAN') {
+            if(value instanceof Boolean)return value;
+            if(value instanceof String) {
+                String normalized=((String)value).trim().toLowerCase();
+                if(normalized=='true')return true;
+                if(normalized=='false')return false;
+            }
+            throw new NativeRequestException(f.getName()+' requires true or false.');
+        }
+        if(kind=='INTEGER'||kind=='LONG') {
+            Decimal numberValue=Decimal.valueOf(String.valueOf(value));
+            if(numberValue!=numberValue.setScale(0))throw new NativeRequestException(f.getName()+' requires a whole number.');
+            Decimal minimum=Decimal.valueOf(kind=='INTEGER'?'-2147483648':'-9223372036854775808');
+            Decimal maximum=Decimal.valueOf(kind=='INTEGER'?'2147483647':'9223372036854775807');
+            if(numberValue<minimum||numberValue>maximum)throw new NativeRequestException(f.getName()+' is outside the supported whole-number range.');
+            // Separate return statements preserve the boxed Apex type used by SObject.put.
+            if(kind=='INTEGER')return numberValue.intValue();
+            return numberValue.longValue();
+        }
+        if(new Set<String>{'CURRENCY','DOUBLE','PERCENT'}.contains(kind))return Decimal.valueOf(String.valueOf(value));
         return String.valueOf(value);
     }
     private static Object access(Map<String,Object> body) {
@@ -113,7 +131,10 @@ global with sharing class OrgLoomNativeController {
         Savepoint sp;
         try {
             OrgLoomNativeAccess.requireAccess();
-            if(payload==null || payload.length()>500000)throw new NativeRequestException('Invalid request size.');
+            // Canvas requests include the snapshot plus session/version metadata.
+            // Keep the existing bound on other operations, including uploads.
+            Integer requestLimit=new Set<String>{'canvas:create','canvas:save','recovery:write'}.contains(operation)?1100000:500000;
+            if(payload==null || payload.length()>requestLimit)throw new NativeRequestException('Invalid request size.');
             Map<String,Object> body=(Map<String,Object>)JSON.deserializeUntyped(payload);Object data;
             if(operation=='capabilities')data=new Map<String,Object>{'capabilities'=>OrgLoomNativeAccess.capabilities(),'admin'=>OrgLoomNativeAccess.isAdmin(),'edition'=>'team'};
             else if(operation=='objects') {

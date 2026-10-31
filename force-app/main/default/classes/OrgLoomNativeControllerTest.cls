@@ -5,6 +5,12 @@ private class OrgLoomNativeControllerTest {
         Set<String> names=new Set<String>{'Access','soql-import','upload-records','bulk-edit-records'};
 
         OrgLoomAccessFixture.grant(u,names);
+        PermissionSet checkboxAccess=new PermissionSet(Name='NativeControllerCheckboxTest',Label='Native controller checkbox test');insert checkboxAccess;
+        insert new List<FieldPermissions>{
+            new FieldPermissions(ParentId=checkboxAccess.Id,SobjectType='Contact',Field='Contact.HasOptedOutOfEmail',PermissionsRead=true,PermissionsEdit=true),
+            new FieldPermissions(ParentId=checkboxAccess.Id,SobjectType='Contact',Field='Contact.DoNotCall',PermissionsRead=true,PermissionsEdit=true)
+        };
+        insert new PermissionSetAssignment(AssigneeId=u.Id,PermissionSetId=checkboxAccess.Id);
 
     }
     private static Map<String,Object> call(String op,Map<String,Object> body) {
@@ -64,6 +70,71 @@ private class OrgLoomNativeControllerTest {
         System.assertEquals(400,call('query',new Map<String,Object>{'soql'=>'SELECT Id FROM OrgLoomNativeCanvas__c'}).get('status'));
         System.assertEquals(400,call('unknown',new Map<String,Object>()).get('status'));
       }
+    }
+    @IsTest static void numericValuesUseTheSalesforceFieldType() {
+        Schema.DescribeFieldResult employees=Account.NumberOfEmployees.getDescribe();
+        for(Object value:new List<Object>{100,'100',Decimal.valueOf('100.0'),JSON.deserializeUntyped('100.0')}) {
+            Object converted=OrgLoomNativeController.convert(value,employees);
+            System.assert(converted instanceof Integer,'Integer fields must receive an Apex Integer.');
+            Account record=new Account();record.put('NumberOfEmployees',converted);
+            System.assertEquals(100,record.NumberOfEmployees);
+        }
+        System.assertEquals(null,OrgLoomNativeController.convert(null,employees));
+        System.assertEquals(2147483647,OrgLoomNativeController.convert('2147483647',employees));
+        for(String value:new List<String>{'100.5','2147483648','-2147483649'}) {
+            Boolean rejected=false;
+            try {OrgLoomNativeController.convert(value,employees);}
+            catch(Exception error){rejected=true;System.assert(error.getMessage().contains('NumberOfEmployees'));}
+            System.assert(rejected,'Invalid integer values must not be rounded or overflow: '+value);
+        }
+        Object revenue=OrgLoomNativeController.convert('1234.56',Account.AnnualRevenue.getDescribe());
+        System.assert(revenue instanceof Decimal);
+        Account decimalRecord=new Account();decimalRecord.put('AnnualRevenue',revenue);
+        System.assertEquals(Decimal.valueOf('1234.56'),decimalRecord.AnnualRevenue);
+    }
+    @IsTest static void checkboxValuesUseStrictBooleanConversion() {
+        Schema.DescribeFieldResult checkbox=Contact.HasOptedOutOfEmail.getDescribe();
+        for(Object value:new List<Object>{true,'true',' TRUE '}) {
+            Object converted=OrgLoomNativeController.convert(value,checkbox);
+            System.assert(converted instanceof Boolean);
+            Contact record=new Contact();record.put('HasOptedOutOfEmail',converted);
+            System.assertEquals(true,record.HasOptedOutOfEmail);
+        }
+        for(Object value:new List<Object>{false,'false',' FALSE '}) {
+            System.assertEquals(false,OrgLoomNativeController.convert(value,checkbox));
+        }
+        System.assertEquals(null,OrgLoomNativeController.convert(null,checkbox));
+        for(Object value:new List<Object>{'yes','no','',1,0,new List<Object>{true}}) {
+            Boolean rejected=false;
+            try {OrgLoomNativeController.convert(value,checkbox);}
+            catch(Exception error){rejected=true;System.assert(error.getMessage().contains('HasOptedOutOfEmail requires true or false'));}
+            System.assert(rejected,'Invalid checkbox input must not silently become false.');
+        }
+    }
+    @IsTest static void jsonNumericDraftsUploadWithRelatedContact() {
+        User actor=[SELECT Id FROM User WHERE Alias='nactrl' LIMIT 1];
+        System.runAs(actor) {
+            Map<String,Object> accountValues=(Map<String,Object>)JSON.deserializeUntyped('{"Name":"Numeric draft regression","NumberOfEmployees":100.0,"AnnualRevenue":1234.56}');
+            Map<String,Object> body=new Map<String,Object>{
+                'attemptId'=>EncodingUtil.convertToHex(Crypto.generateAesKey(128)),
+                'expectedSfOrgId'=>UserInfo.getOrganizationId(),
+                'records'=>new List<Object>{
+                    new Map<String,Object>{'tempId'=>1,'objectName'=>'Account','values'=>accountValues},
+                    new Map<String,Object>{'tempId'=>2,'objectName'=>'Contact','values'=>new Map<String,Object>{'LastName'=>'Numeric draft contact','HasOptedOutOfEmail'=>'true','DoNotCall'=>'false'}}
+                },
+                'associations'=>new List<Object>{new Map<String,Object>{'fromId'=>2,'toId'=>1,'fieldName'=>'AccountId'}},
+                'deletes'=>new List<Object>()
+            };
+            Test.startTest();Map<String,Object> response=call('upload',body);Test.stopTest();
+            System.assertEquals(200,response.get('status'),JSON.serialize(response));
+            Account saved=[SELECT Id,NumberOfEmployees,AnnualRevenue FROM Account WHERE Name='Numeric draft regression' LIMIT 1];
+            System.assertEquals(100,saved.NumberOfEmployees);
+            System.assertEquals(Decimal.valueOf('1234.56'),saved.AnnualRevenue);
+            Contact contact=[SELECT AccountId,HasOptedOutOfEmail,DoNotCall FROM Contact WHERE LastName='Numeric draft contact' LIMIT 1];
+            System.assertEquals(saved.Id,contact.AccountId);
+            System.assertEquals(true,contact.HasOptedOutOfEmail);
+            System.assertEquals(false,contact.DoNotCall);
+        }
     }
     @IsTest static void recordTypePicklistsUseNativeUiApiShape() {
         User actor=[SELECT Id FROM User WHERE Alias='nactrl' LIMIT 1];

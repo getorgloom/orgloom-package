@@ -219,6 +219,7 @@
 
 	function reconcileSyncedRecords(records, synced, canonicalValues, submittedSnapshots, associations) {
 		const realIdByTempId = new Map((synced || []).map((result) => [result.tempId, result.id]));
+		const unchangedIds = new Set((synced || []).filter((result) => result.mode === 'unchanged').map((result) => result.tempId));
 		const salesforceIdByCanvasRef = new Map();
 		for (const [tempId, sfId] of realIdByTempId) {
 			if (tempId != null && sfId) {
@@ -278,8 +279,10 @@
 				}
 			}
 			// A successful upload fulfills any request attached to this record.
-			delete record.slot;
-			delete record._recipientSlot;
+			if (!unchangedIds.has(record.id)) {
+				delete record.slot;
+				delete record._recipientSlot;
+			}
 			record.loadedFromId = realIdByTempId.get(record.id);
 			record.values = record.values || {};
 			record.values.Id = record.loadedFromId;
@@ -986,7 +989,7 @@
 									escapeHtml(field.fieldName) +
 									'</span></div>' +
 									'<div class="upload-conflict-values">' +
-									'<div class="upload-conflict-value"><span class="upload-conflict-value-label">Original value</span><code>' +
+									'<div class="upload-conflict-value"><span class="upload-conflict-value-label">Value when loaded</span><code>' +
 									escapeHtml(baselineValue(field.loaded)) +
 									'</code></div>' +
 									'<div class="upload-conflict-value"><span class="upload-conflict-value-label">Current Salesforce value</span><code>' +
@@ -1019,7 +1022,7 @@
 					})
 					.join('');
 				contentEl.innerHTML =
-					'<div class="banner warning"><strong>Salesforce changed since this canvas was loaded.</strong></div>' +
+					'<div class="banner warning upload-conflict-banner"><strong>Salesforce changed since this canvas was loaded.</strong></div>' +
 					'<div class="upload-conflict-list">' +
 					recordHtml +
 					'</div>';
@@ -1725,7 +1728,13 @@
 						const result = (body.results || []).find(
 							(r) => r.tempId === entry.tempId && r.objectName === record.objectName,
 						);
-						if (result && result.success && result.id) {
+						if (
+							(result && result.success && result.mode === 'unchanged') ||
+							(!result && body.unreportedRecordsNotSubmitted === true)
+						) {
+							// No write occurred. Keep local edits and simply release the attempt marker.
+							safe.push(record);
+						} else if (result && result.success && result.id) {
 							resolved.set(record.id, result.id);
 							safe.push(record);
 						} else if ((body.retryableTempIds || []).includes(entry.tempId)) {
@@ -1783,13 +1792,16 @@
 				_uploadAttemptId = null;
 				flushAutosave();
 				const unresolved = recoveryJournal.entries(records).length;
+				if (!unresolved && !recovered) {
+					return false;
+				}
 				renderAttemptIncomplete({
 					recoveryComplete: unresolved === 0,
 					message:
 						(recovered ? recovered + ' confirmed records restored to the canvas. ' : '') +
 						(unresolved
 							? unresolved +
-								' records still have an unknown outcome. Check Upload History and Salesforce before replacing these drafts.'
+								' records still have an unknown outcome. Check Salesforce before uploading these drafts again.'
 							: entries.length > recovered
 								? 'The remaining records were not saved. Close this message and upload again to retry them safely.'
 								: 'All records from this attempt have been recovered.'),
@@ -2901,7 +2913,10 @@
 							message + ' ' + (issue.errorCode || ''),
 						)
 					) {
-						heading = 'Value isn’t an active picklist option';
+						heading =
+							issue.errorCode === 'INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST'
+								? 'Salesforce rejected a picklist value'
+								: 'Value isn’t an active picklist option';
 					} else if (issue.field === '(cascade)') {
 						heading = 'Drafts depend on a record you’re deleting';
 					} else if (/reference cycle/.test(message)) {
@@ -2943,6 +2958,19 @@
 									describe.fields &&
 									describe.fields.find((item) => item.name === fieldName);
 								const fieldLabel = issue.fieldLabel || (field && field.label) || fieldName;
+								const controller = field && field.controllerName;
+								const controllerField =
+									controller && describe.fields.find((item) => item.name === controller);
+								const picklistGuidance =
+									issue.errorCode === 'INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST'
+										? controller
+											? 'Review ' +
+												(controllerField?.label || controller) +
+												', then choose an available ' +
+												fieldLabel +
+												' value in the record editor and retry.'
+											: 'Choose a picklist value available for this record in the record editor, then retry.'
+										: '';
 								const record = canvasState.bulkRecords.find(
 									(item) => String(item.id) === String(issue.recordId),
 								);
@@ -2970,6 +2998,9 @@
 									'<div class="upload-fix-message">' +
 									escapeHtml(issue.message || 'Salesforce rejected this record.') +
 									'</div>' +
+									(picklistGuidance
+										? '<div class="upload-fix-message">' + escapeHtml(picklistGuidance) + '</div>'
+										: '') +
 									(issue.errorCode
 										? '<div class="upload-error-details">' + escapeHtml(issue.errorCode) + '</div>'
 										: '') +
@@ -3208,13 +3239,15 @@
 						'<div class="banner">' +
 						(body && body.recoveryComplete
 							? '<strong>Upload interrupted.</strong> '
-							: '<strong>Upload paused to prevent duplicate records.</strong> ') +
+							: window.ORGLOOM_DESKTOP_LIVE
+								? '<strong>Upload result could not be confirmed.</strong> '
+								: '<strong>Upload paused to prevent duplicate records.</strong> ') +
 						escapeHtml(
 							(body && body.message) ||
 								'Org Loom could not confirm whether Salesforce saved the previous attempt.',
 						) +
 						'</div>' +
-						(body && body.recoveryComplete
+						(window.ORGLOOM_DESKTOP_LIVE || (body && body.recoveryComplete)
 							? ''
 							: '<div style="margin-top:0.75em">' +
 								'<strong>Before uploading these drafts again:</strong>' +
@@ -3396,15 +3429,12 @@
 						uploadIssueGroupsHtml(fixIssues);
 					if (dupFailed.length > 0) {
 						html +=
-							'<div class="banner" style="margin-top:0.6em">' +
+							'<div class="banner" style="margin-top:0.6em;border-left:0">' +
 							'<strong>' +
 							dupFailed.length +
 							' record' +
 							(dupFailed.length === 1 ? '' : 's') +
 							' blocked by Salesforce duplicate rules.</strong> ' +
-							'If ' +
-							(dupFailed.length === 1 ? 'this is' : 'these are') +
-							' intentional (not accidental duplicates), you can upload anyway; Salesforce will record the duplicate alert but accept the save. ' +
 							'<button type="button" class="button secondary" id="upload-allow-dups" style="margin-left:0.4em;font-size:0.82rem;padding:0.2em 0.6em">Upload anyway</button>' +
 							'</div>';
 					}
@@ -3479,6 +3509,15 @@
 					canvasState.bulkAssociations,
 				);
 				_clearSubmittedEncryptedValues(synced, submittedSnapshots, canonicalValues);
+				// Only clear a skipped record's stale baseline when Salesforce supplied
+				// a full snapshot for that same record. Preserve edits made in flight.
+				reconcileSyncedRecords(
+					canvasState.bulkRecords,
+					unchanged.filter((row) => canonicalValues?.[row.tempId]?.Id === row.id),
+					canonicalValues,
+					submittedSnapshots,
+					canvasState.bulkAssociations,
+				);
 				_fixTasks?.recordResults([...synced, ...failed], deletesArr);
 				canvasState.bulkRecords.forEach((rec) => {
 					if (realIdByTempId.has(rec.id)) {

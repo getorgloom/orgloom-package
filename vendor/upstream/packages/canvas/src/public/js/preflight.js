@@ -295,6 +295,11 @@
 								addIssue(rec, f, 'error', 'Value isn\u2019t a valid number.');
 							} else if (f.type === 'int' && !Number.isInteger(n)) {
 								addIssue(rec, f, 'error', 'Value must be an integer.');
+							} else if (Number.isInteger(f.precision) && f.precision > 0 && Number.isInteger(f.scale) && f.scale >= 0 && f.scale <= f.precision) {
+								const integerDigits = f.precision - f.scale;
+								if (Math.abs(n) >= Math.pow(10, integerDigits)) {
+									addIssue(rec, f, 'error', 'Value exceeds the destination limit of ' + integerDigits + ' digits before the decimal point.');
+								}
 							}
 						}
 
@@ -453,6 +458,7 @@
 					recordsById.set(r.id, r);
 				});
 				const deps = new Map();
+				const draftLinks = new Map();
 				recordsById.forEach((_, id) => deps.set(id, new Set()));
 				canvasState.bulkAssociations.forEach((a) => {
 					if (!a || !deps.has(a.fromId)) {
@@ -466,7 +472,52 @@
 						return;
 					} // resolved up-front, no level cost
 					deps.get(a.fromId).add(a.toId);
+					if (!draftLinks.has(a.fromId)) {
+						draftLinks.set(a.fromId, []);
+					}
+					draftLinks.get(a.fromId).push(a);
 				});
+				if (window.OrgLoom.platform?.upload?.deferredReferences === true) {
+					// Match uploaders that can insert a nullable reference empty and
+					// complete it inside the same transaction once its target exists.
+					const pending = new Set(
+						Array.from(recordsById.keys()).filter((id) => !skip.has(id) && !deletes.has(id)),
+					);
+					while (pending.size) {
+						let ready = Array.from(pending).filter((id) =>
+							Array.from(deps.get(id)).every((parent) => !pending.has(parent)),
+						);
+						if (!ready.length) {
+							ready = Array.from(pending).filter((id) => {
+								const record = recordsById.get(id);
+								return (draftLinks.get(id) || [])
+									.filter((link) => pending.has(link.toId))
+									.every((link) => {
+										const field = canvasState.describeCache[record.objectName]?.fields?.find(
+											(candidate) => candidate.name === link.fieldName,
+										);
+										return (
+											field?.type === 'reference' &&
+											field.nillable === true &&
+											field.updateable === true &&
+											field.referenceTo?.includes(recordsById.get(link.toId).objectName)
+										);
+									});
+							});
+							for (const id of ready) {
+								for (const parent of deps.get(id)) {
+									if (pending.has(parent)) {
+										deps.get(id).delete(parent);
+									}
+								}
+							}
+						}
+						if (!ready.length) {
+							break;
+						}
+						ready.forEach((id) => pending.delete(id));
+					}
+				}
 				const levelById = new Map();
 				const cycleIds = new Set();
 				function lvl(id, stack, stackArr) {

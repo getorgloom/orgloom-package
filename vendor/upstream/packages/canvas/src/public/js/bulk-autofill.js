@@ -46,6 +46,15 @@
 				rec._valuesRevision = (Number(rec._valuesRevision) || 0) + 1;
 			}
 
+			function canFillField(record, field) {
+				return (
+					!!field &&
+					!field.calculated &&
+					!field.autoNumber &&
+					(record.loadedFromId ? field.updateable === true : field.createable === true)
+				);
+			}
+
 			function _valuesFingerprint(values) {
 				try {
 					return JSON.stringify(values || {});
@@ -112,7 +121,13 @@
 					const values = rec.values || {};
 					const linkedFields = linkedFieldsByRecord.get(rec.id) || new Set();
 					for (const f of describe.fields) {
-						if (!f || !f.name || (scope === 'required' && !f.required) || !typePick(f)) {
+						if (
+							!f ||
+							!f.name ||
+							!canFillField(rec, f) ||
+							(scope === 'required' && !f.required) ||
+							!typePick(f)
+						) {
 							continue;
 						}
 						const existing = values[f.name];
@@ -258,6 +273,10 @@
 							const values = Object.assign({}, rec.values || {});
 							if (
 								rec.objectName === 'User' &&
+								canFillField(
+									rec,
+									describe.fields.find((field) => field.name === 'IsActive'),
+								) &&
 								(values.IsActive === undefined || values.IsActive === '' || values.IsActive === null)
 							) {
 								values.IsActive = false;
@@ -270,6 +289,7 @@
 							];
 							const typePick = fieldTypeFilter(fieldType);
 							ordered.forEach((f) => {
+								if (!canFillField(rec, f)) return;
 								if (scope === 'required' && !f.required) {
 									return;
 								}

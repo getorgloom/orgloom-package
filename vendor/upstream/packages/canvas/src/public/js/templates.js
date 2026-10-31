@@ -1649,8 +1649,10 @@
 			function withCanvasLoad(apply) {
 				return async function (payload, opts) {
 					// Merges are intentional edits. Live snapshots have their own synchronization gate.
-					if (opts && (opts.merge || opts.presenceSnapshot)) return apply(payload, opts);
-					const finish = deps.beginCanvasLoad?.();
+					const finish = opts && (opts.merge || opts.presenceSnapshot) ? null : deps.beginCanvasLoad?.();
+					const finishImport = opts?.importFileName
+						? deps.beginImportLoad?.(opts.merge ? 'Adding records to canvas…' : 'Loading canvas…')
+						: null;
 					let success = false;
 					try {
 						if (finish?.ready) await finish.ready;
@@ -1658,7 +1660,11 @@
 						success = true;
 						return result;
 					} finally {
-						finish?.(success);
+						try {
+							finish?.(success);
+						} finally {
+							finishImport?.();
+						}
 					}
 				};
 			}

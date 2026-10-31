@@ -32,6 +32,45 @@
     ORGLOOM_ACCOUNT_ID:'salesforce-native',ORGLOOM_SF_CONNECTED:true,ORGLOOM_HAS_DOCS:false,ORGLOOM_CANVAS_PATH:location.pathname,ORGLOOM_MOCK:false,ORGLOOM_MCP_ACTIVE:false,ORGLOOM_SENTRY_DSN:null,ORGLOOM_ENV:'native-prototype'});
   let uploading=false,uncertain=false,uncertainAttempt=null;
   const sessions=new Map(),versions=new Map(),recallReviews=new Map();let activeCanvas=null,sessionEnded=false,activatedAt=0,heartbeatPending=false;
+  // Resume this tab's canvas lease after refresh without treating a duplicated
+  // tab as the same editor. A Web Lock protects the copied sessionStorage key.
+  // Only canvas IDs and canvas-scoped lease tokens are retained, never payloads
+  // or Salesforce credentials. The server still validates the user and token.
+  const leaseKey='orgloom:native:canvas-session:'+identity.orgId+':'+identity.userId+':'+remote;
+  let leaseCache=null;
+  const randomLeaseId=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
+  function holdLeaseCache(id){
+    return new Promise(resolve=>{
+      navigator.locks.request(leaseKey+':'+id,{ifAvailable:true},lock=>{
+        if(!lock){resolve(false);return;}
+        resolve(true);return new Promise(()=>{}); // Released automatically when this document closes.
+      }).catch(()=>resolve(false));
+    });
+  }
+  function rememberLease(id,token){
+    if(!leaseCache)return;
+    const value={id:leaseCache};
+    if(id&&token){value.canvasId=id;value.token=token;}
+    try{recoveryStorage.setItem(leaseKey,JSON.stringify(value));}catch{/* In-memory access still works. */}
+  }
+  const leaseReady=(async()=>{
+    if(!recoveryStorage||!navigator.locks?.request)return;
+    try{
+      let stored;
+      try{stored=JSON.parse(recoveryStorage.getItem(leaseKey)||'null');}catch{/* Ignore malformed metadata. */}
+      if(!/^[a-f0-9]{64}$/.test(stored?.id||''))stored={id:randomLeaseId()};
+      if(!await holdLeaseCache(stored.id)){
+        // A duplicated tab inherits sessionStorage, but may not inherit authority.
+        stored={id:randomLeaseId()};
+        if(!await holdLeaseCache(stored.id))return;
+      }
+      leaseCache=stored.id;
+      if(/^[a-zA-Z0-9]{15,18}$/.test(stored.canvasId||'')&&/^[a-f0-9]{64}$/.test(stored.token||'')){
+        sessions.set(stored.canvasId,stored.token);
+        rememberLease(stored.canvasId,stored.token);
+      }else rememberLease();
+    }catch{/* No safe tab identity available: retain the normal takeover checks. */}
+  })();
   let partialNotice=null,partialCanvas=null,partialOpenedAt=0;
   function showPartialView(partial,id){
     partialNotice?.remove();partialNotice=null;
@@ -56,18 +95,24 @@
       if(!recoveryStorage)throw Error('Browser session storage is unavailable. Save your canvas before refreshing.');
       if(key==null)recoveryStorage.removeItem(recoveryKey);else recoveryStorage.setItem(recoveryKey,key);
     },
-    async request(op,body){const reply=await call('recovery:'+op,body);if(reply.status!==200)throw Error(reply.data?.message||'Recovery request failed.');return reply.data;},
+    async request(op,body){await leaseReady;const reply=await call('recovery:'+op,body);if(reply.status!==200)throw Error(reply.data?.message||'Recovery request failed.');return reply.data;},
+    async openSaved(id){
+      const reply=await canvasCall('open',{id});
+      if(reply.status!==200)throw Error(reply.data?.message||'The saved canvas could not be opened.');
+      return reply.data;
+    },
     session(id){return sessions.get(id);},
     blocked(){return sessionEnded||uploading||uncertain;},
     end:message=>endSession(message),
     adopt(data){
-      if(data.id&&data.sessionToken){activeCanvas=data.id;activatedAt=Date.now();sessions.set(data.id,data.sessionToken);versions.set(data.id,data.versionId);}
+      if(data.id&&data.sessionToken){activeCanvas=data.id;activatedAt=Date.now();sessions.set(data.id,data.sessionToken);versions.set(data.id,data.versionId);rememberLease(data.id,data.sessionToken);}
       showPartialView(data.partialView===true,data.id);
     },
   };
   const response=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
   function endSession(message) {
     if(sessionEnded)return;sessionEnded=true;
+    rememberLease();
     const blocker=document.createElement('div');blocker.id='native-session-ended';blocker.setAttribute('role','alertdialog');blocker.setAttribute('aria-modal','true');
     const heading=document.createElement('h2');heading.textContent='Canvas session ended';
     const text=document.createElement('p');text.textContent=message.replace('SESSION_ENDED: ','')+' Your unsaved work remains in this tab, but this session cannot save or upload.';
@@ -77,8 +122,9 @@
     document.body.append(blocker);reload.focus?.();
   }
   async function canvasCall(op,body){
+    await leaseReady;
     if(sessionEnded)throw Error('This canvas session has ended.');
-    const saving=['save','create','fill','delete'].includes(op);
+    const saving=['save','create','fill','delete','request'].includes(op);
     if(saving)await window.OrgLoomNativeRecovery?.beforeSave?.();
     const id=body.id;if(id&&sessions.has(id))body.sessionToken=sessions.get(id);
     if(op==='fill')body.expectedVersionId=versions.get(id);
@@ -104,19 +150,22 @@
     if(result.status===200&&result.data?.versionId)versions.set(result.data.id||id,result.data.versionId);
     if(result.status===200&&(op==='open'||op==='create'))showPartialView(result.data?.partialView===true,result.data?.id);
     if(result.status===200&&op==='delete'){
-      sessions.delete(id);versions.delete(id);if(activeCanvas===id)activeCanvas=null;
+      sessions.delete(id);versions.delete(id);if(activeCanvas===id){activeCanvas=null;rememberLease();}
     }
     if(result.status===200&&result.data?.sessionToken){
       if(activeCanvas&&activeCanvas!==result.data.id)release(activeCanvas);
       activeCanvas=result.data.id;activatedAt=Date.now();sessions.set(activeCanvas,result.data.sessionToken);
+      rememberLease(activeCanvas,result.data.sessionToken);
     }
-    if(saving)await window.OrgLoomNativeRecovery?.saved?.(result.status===200);
+    // Request saves leave other edits dirty. The caller rebases recovery after
+    // adopting the new revision; do not retire its checkpoint as a full save.
+    if(saving&&(op!=='request'||result.status!==200))await window.OrgLoomNativeRecovery?.saved?.(result.status===200);
     if(result.status!==200&&result.data?.message?.includes('SESSION_ENDED:'))endSession(result.data.message.replace('SESSION_ENDED: ',''));
     return result;
   }
   function release(id){
     const sessionToken=sessions.get(id);sessions.delete(id);
-    if(activeCanvas===id)activeCanvas=null;
+    if(activeCanvas===id){activeCanvas=null;rememberLease();}
     if(sessionToken)call('canvas:release',{id,sessionToken}).catch(()=>{}); // Expiry handles transport failure.
   }
   // The pinned frontend owns canvas replacement. Release after it has applied a
@@ -125,13 +174,20 @@
     if(activeCanvas&&Date.now()-activatedAt>10000&&window.Orgloom?.canvasState?.getCurrentCanvas&&window.Orgloom.canvasState.getCurrentCanvas()?.canvasId!==activeCanvas)release(activeCanvas);
     if(partialCanvas&&Date.now()-partialOpenedAt>10000&&window.Orgloom?.canvasState?.getCurrentCanvas&&window.Orgloom.canvasState.getCurrentCanvas()?.canvasId!==partialCanvas)showPartialView(false);
   },5000);
-  setInterval(async()=>{
+  async function heartbeat(){
     if(!activeCanvas||sessionEnded||heartbeatPending)return;
     const id=activeCanvas;heartbeatPending=true;
     try{const result=await call('canvas:heartbeat',{id,sessionToken:sessions.get(id)});if(activeCanvas===id&&result.status!==200)endSession(result.data?.message||'Access to this canvas is no longer available.');}
     catch{if(activeCanvas===id)endSession('Salesforce could not confirm that your session is still active.');}
     finally{heartbeatPending=false;}
-  },30000);
+  }
+  // Faster takeover detection while visible; retain the background lease cadence.
+  // These checks never save a canvas or create recovery checkpoints.
+  const checkVisibleSession=()=>{if(!document.hidden)return heartbeat();};
+  setInterval(checkVisibleSession,5000);
+  setInterval(()=>{if(document.hidden)return heartbeat();},30000);
+  document.addEventListener?.('visibilitychange',checkVisibleSession);
+  window.addEventListener?.('focus',checkVisibleSession);
   async function route(path,method,body) {
     const url=new URL(path,location.origin),p=url.pathname;
     if(p==='/api/me'||p==='/api/me/capabilities'){
@@ -153,6 +209,8 @@
     if(p==='/api/canvas'&&['GET','POST'].includes(method))return canvasCall(method==='POST'?'create':'list',body);
     if(p==='/api/sf/users/search'&&method==='GET')return call('shareUsers',Object.fromEntries(url.searchParams));
     if(p==='/api/migrate/match'&&method==='POST')return call('migrationMatch',body);
+    const requestChange=/^\/api\/canvas\/([A-Za-z0-9]{15,18})\/request-change$/.exec(p);
+    if(requestChange&&method==='POST')return canvasCall('request',{...body,id:requestChange[1]});
     const sharing=/^\/api\/canvas\/([A-Za-z0-9]{15,18})\/(share-links|direct-share|slot-fill|direct-shares\/([A-Za-z0-9]{15,18}))$/.exec(p);
     if(sharing){
       const id=sharing[1];

@@ -105,8 +105,20 @@
 	function applyLoadedRecordUnlink(canvasState, targetRecord) {
 		if (!canvasState || !targetRecord || !targetRecord.loadedFromId) return;
 		const originalId = targetRecord.loadedFromId;
+		const fields = canvasState.describeCache?.[targetRecord.objectName]?.fields || [];
+		const excludedFields = new Set(
+			fields
+				.filter((field) => field.createable === false || field.calculated || field.autoNumber)
+				.map((field) => field.name),
+		);
+		// An unlinked record becomes a new draft. Do not carry fields Salesforce
+		// only returns on existing records into that draft's create payload.
+		for (const name of Object.keys(targetRecord.values || {})) {
+			if (name === 'Id' || name === 'attributes' || excludedFields.has(name)) delete targetRecord.values[name];
+		}
 		const recordsById = new Map((canvasState.bulkRecords || []).map((record) => [record.id, record]));
 		canvasState.bulkAssociations = (canvasState.bulkAssociations || []).filter((association) => {
+			if (association?.fromId === targetRecord.id && excludedFields.has(association.fieldName)) return false;
 			if (!association || association.toId !== targetRecord.id) return true;
 			const holder = recordsById.get(association.fromId);
 			// Preserve the lookup after removing the canvas link, including association-only values.
@@ -2708,16 +2720,7 @@
 								currentFormValues = Object.assign({}, initialValues || {});
 								renderForm('');
 								wireLiveValidation();
-								const submitBtn = _syncSubmitButtonAccess();
-								if (
-									!submitBtn.hidden &&
-									canvasState.currentRecordRef &&
-									canvasState.currentRecordRef._recipientSlot &&
-									_slotAssignmentState(canvasState.currentRecordRef) === 'other'
-								) {
-									submitBtn.disabled = true;
-									submitBtn.title = 'Reserved for the assigned teammate; read-only for you.';
-								}
+								_syncSubmitButtonAccess();
 								if (initialValues && Object.keys(initialValues).length > 0) {
 									populateForm(initialValues);
 									refreshEditorValidation();
@@ -5483,7 +5486,14 @@
 					...currentFields.filter((f) => f.controllerName),
 				];
 				const values = {};
+				const writableFields = currentFields.filter(
+					(field) =>
+						!field.calculated &&
+						!field.autoNumber &&
+						(modalEditMode === 'new' ? field.createable === true : field.updateable === true),
+				);
 				ordered
+					.filter((field) => writableFields.includes(field))
 					.filter(pick)
 					.filter(typePick)
 					.forEach((f) => {
@@ -5493,7 +5503,10 @@
 						}
 						values[f.name] = sample;
 					});
-				tryFixValidationRules(values, currentFields, currentRules);
+				tryFixValidationRules(values, writableFields, currentRules);
+				for (const name of Object.keys(values)) {
+					if (!writableFields.some((field) => field.name === name)) delete values[name];
+				}
 				Object.keys(values).forEach((fieldName) => editorTouchedFields.add(fieldName));
 				populateForm(values);
 				refreshEditorValidation();

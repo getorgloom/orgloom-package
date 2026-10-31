@@ -155,6 +155,21 @@ function assertAccepts(source, records = []) {
 	);
 }
 
+test('extension adversarial payloads also fail in the packaged script interpreter', () => {
+  const records=[{id:1,loadedFromId:'001abc',values:{Name:'console.log("OL_SECURITY_EXECUTED")'}}];
+  for(const source of [
+    'console.log("OL_SECURITY_EXECUTED");','eval(records[0].values.Name);',
+    'Function("return process")();','require("node:fs").readFileSync(".env");',
+    'process.env;','globalThis.process;','fetch("https://attacker.invalid");',
+    'records.constructor.constructor("return process")();',
+    'records["con" + "structor"];','max.bind(null).constructor;',
+    'records.__proto__;','records["__pro" + "to__"];','records.__lookupGetter__("x");',
+    'records[0].loadedFromId = "001changed";','for(let i=0;i<1000000000;i++){}',
+  ]) assertRejects(source,undefined,records);
+  assertAccepts('records[0].values.Description = records[0].values.Name;',records);
+  assert.equal(records[0].values.Description,records[0].values.Name);
+});
+
 describe('Sandbox: prototype-chain escape attempts must throw', () => {
 	test('object literal .constructor blocked', () => {
 		assertRejects('let f = max.constructor;', /Property "constructor" is not allowed/);

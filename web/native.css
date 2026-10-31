@@ -1,10 +1,12 @@
-html,body {margin:0;padding:0;height:100%;background:var(--bg);color:var(--ink);}
+html,body {margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);}
 /* The embedded canvas has no hosted navigation header to reserve space for. */
-body.canvas-page > .app-main {margin-top:0;padding-top:0;}
+body.canvas-page > .app-main {margin:0;padding:0;max-width:none;}
 body.canvas-page .graph-overlay {top:0;}
 /* Opening a saved canvas can require takeover confirmation while the shared
    replacement-loading mask (z-index 9200) is still active. */
 body.canvas-page .app-confirm-modal {z-index:9300;}
+.field .native-assoc-record-label {cursor:default;color:var(--ink);}
+.field .native-assoc-record-label:hover span {text-decoration:none;}
 #native-status {position:fixed;bottom:12px;left:12px;}
 #native-recovery-status {position:fixed;bottom:8px;right:12px;z-index:100;font:11px/1.4 system-ui;color:var(--ink);background:var(--bg);padding:4px 8px;border-radius:4px;max-width:480px;}
 #native-recovery-status[data-error="true"] {color:#e5b66b;}

@@ -9,6 +9,7 @@
     canvas.fit(undefined, 70);
     if (canvas.zoom() > 1) { canvas.zoom(1); canvas.center(); }
   }
+  window.OrgLoomNativeViewport = Object.freeze({ fit });
   window.cytoscape = new Proxy(window.cytoscape, {
     apply(target, receiver, args) {
       const cy = Reflect.apply(target, receiver, args);

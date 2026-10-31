@@ -18,7 +18,7 @@ test('native platform builds encoded Lightning links, exports migration files an
   try{
     assert.equal(platform.share.buildUrl('id&other=value'),'https://example.lightning.force.com/lightning/n/OrgLoomNativeCanvas?c__openCanvas=id%26other%3Dvalue');
     let exports=0;platform.migration.start({exportForMigration:()=>exports++});assert.equal(exports,1);
-    assert.match(platform.share.notificationMessage({notificationMode:'saved-canvases'}),/No email was sent/);
+    assert.equal(platform.share.notificationMessage({notificationMode:'saved-canvases'}),'');
     assert.equal(platform.share.notificationMessage({emailDeliverFailed:true}),undefined);
     assert.equal(platform.requestSequenceFloor({_meta:{nativeNextSlotId:42}}),42);
   }finally{dom.window.close();}
@@ -30,6 +30,19 @@ test('managed native sharing uses the namespaced Lightning tab returned by Sales
     w.__ORGLOOM_NATIVE_IDENTITY__.canvasTabName='orgloom__OrgLoomNativeCanvas';
     assert.equal(platform.share.buildUrl('test-id'),'https://example.lightning.force.com/lightning/n/orgloom__OrgLoomNativeCanvas?c__openCanvas=test-id');
   }finally{dom.window.close();}
+});
+
+test('native preflight permits the nullable cycles handled atomically by Apex',()=>{
+  const {dom,w,platform}=browser();
+  try {
+    assert.equal(platform.upload.deferredReferences,true);
+    w.eval(fs.readFileSync(path.join(shared,'preflight.js'),'utf8'));
+    const state={bulkRecords:[{id:1,objectName:'Consultant__c'},{id:2,objectName:'Consultant__c'}],bulkAssociations:[{fromId:1,toId:2,fieldName:'Manager__c'},{fromId:2,toId:1,fieldName:'Manager__c'}],selectedObjects:[],describeCache:{Consultant__c:{fields:[{name:'Manager__c',type:'reference',referenceTo:['Consultant__c'],nillable:true,updateable:true}]}}};
+    const preflight=w.OrgLoom.preflight.mount({canvasState:state,isRecordModified:()=>true,recordOrdinal:r=>r.id});
+    assert.equal(preflight.computeUploadOrder().cycleIds.size,0);
+    state.describeCache.Consultant__c.fields[0].nillable=false;
+    assert.equal(preflight.computeUploadOrder().cycleIds.size,2);
+  } finally {dom.window.close();}
 });
 test('native submission reloads contributors and only completes matching whole-record requests for editors',async()=>{
   const {dom,platform}=browser();

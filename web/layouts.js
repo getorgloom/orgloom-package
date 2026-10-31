@@ -1,23 +1,47 @@
 (() => {
   'use strict';
   const origin=window.__ORGLOOM_NATIVE_IDENTITY__.lightningOrigin;
-  const pending=new Map();let connected=false,sequence=0;
+  const pending=new Map();let connected=false,sequence=0,sendFailed=false;
+  function send(message){
+    // JSON strings cross Lightning's security boundary without object proxies.
+    try{window.parent.postMessage(JSON.stringify(message),origin);return true;}
+    catch{
+      connected=false;sendFailed=true;
+      for(const job of pending.values()){clearTimeout(job.timer);job.resolve(null);}
+      pending.clear();return false;
+    }
+  }
+  function dispatch(id,job){
+    if(job.sent)return;
+    job.sent=true;
+    send({type:'orgloom-native-layout',id,request:job.request});
+  }
   window.addEventListener('message',event=>{
     if(event.source!==window.parent||event.origin!==origin)return;
-    if(event.data?.type==='orgloom-native-ready'){connected=true;return;}
-    if(event.data?.type!=='orgloom-native-layout-result')return;
-    const job=pending.get(event.data.id);if(!job)return;
-    pending.delete(event.data.id);clearTimeout(job.timer);
-    if(event.data.error)job.resolve(null);else job.resolve(event.data.data);
+    let message=event.data;
+    if(typeof message==='string'){try{message=JSON.parse(message);}catch{return;}}
+    if(message?.type==='orgloom-native-ready'){
+      connected=true;sendFailed=false;
+      for(const [id,job] of pending)dispatch(id,job);
+      return;
+    }
+    if(message?.type!=='orgloom-native-layout-result')return;
+    const job=pending.get(message.id);if(!job)return;
+    pending.delete(message.id);clearTimeout(job.timer);
+    if(message.error)job.resolve(null);else job.resolve(message.data);
   });
-  if(window.parent!==window&&origin)window.parent.postMessage({type:'orgloom-native-hello'},origin);
+  if(window.parent!==window&&origin)send({type:'orgloom-native-hello'});
   function requestLayout(request){
-    if(!connected)return Promise.resolve(null);
+    if(window.parent===window||!origin||sendFailed)return Promise.resolve(null);
     return new Promise(resolve=>{
       const id='layout_'+(++sequence);
       const timer=setTimeout(()=>{pending.delete(id);resolve(null);},15000);
-      pending.set(id,{resolve,timer});
-      window.parent.postMessage({type:'orgloom-native-layout',id,request},origin);
+      const job={resolve,timer,request,sent:false};
+      pending.set(id,job);
+      if(connected)dispatch(id,job);
+      // The initial hello can precede the Lightning host's listener. Keep the
+      // request queued until readiness, and retry the handshake for this request.
+      else send({type:'orgloom-native-hello'});
     });
   }
   function normalize(layout,fields){

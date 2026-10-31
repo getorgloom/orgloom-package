@@ -1,10 +1,13 @@
 @IsTest private class OrgLoomNativeActivityTest {
     @TestSetup static void setup(){
+        // Admins-only installation grants custom permissions to the installer's
+        // profile. The non-admin fixture must not inherit those profile grants.
+        Id memberProfile=[SELECT Id FROM Profile WHERE Name='Minimum Access - Salesforce' LIMIT 1].Id;
         List<User> users=new List<User>();
-        for(String alias:new List<String>{'actadmin','actuser'})users.add(new User(ProfileId=UserInfo.getProfileId(),Username=alias+System.now().getTime()+'@example.invalid',Email=alias+'@example.invalid',Alias=alias,LastName=alias,TimeZoneSidKey='America/Phoenix',LocaleSidKey='en_US',EmailEncodingKey='UTF-8',LanguageLocaleKey='en_US'));
+        for(String alias:new List<String>{'actadmin','actuser'})users.add(new User(ProfileId=alias=='actuser'?memberProfile:UserInfo.getProfileId(),Username=alias+System.now().getTime()+'@example.invalid',Email=alias+'@example.invalid',Alias=alias,LastName=alias,TimeZoneSidKey='America/Phoenix',LocaleSidKey='en_US',EmailEncodingKey='UTF-8',LanguageLocaleKey='en_US'));
         insert users;
         OrgLoomAccessFixture.grant(users[0],new Set<String>{'Admin','save-canvas','share-canvas','open-saved-canvas','upload-records','recall-upload','view-activity-history'});
-        OrgLoomAccessFixture.grant(users[1],new Set<String>{'Access','view-activity-history'});
+        OrgLoomAccessFixture.grant(users[1],new Set<String>{'Access','view-activity-history','receive-canvas','open-saved-canvas'});
     }
     private static User actor(String alias){return [SELECT Id FROM User WHERE Alias=:alias LIMIT 1];}
     private static Map<String,Object> payload(){return new Map<String,Object>{'_meta'=>new Map<String,Object>{'savedFrom'=>UserInfo.getOrganizationId()},'loadedRecords'=>new List<Object>(),'drafts'=>new List<Object>(),'associations'=>new List<Object>()};}

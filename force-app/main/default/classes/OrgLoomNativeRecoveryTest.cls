@@ -55,11 +55,18 @@
             Map<String,Object> saved=(Map<String,Object>)OrgLoomNativeCanvases.handle('create',new Map<String,Object>{'name'=>'Recovery lease test','payload'=>payload('Saved')});
             String key=token(),writer=token();Map<String,Object> body=request(key,writer,1);
             body.put('canvasId',saved.get('id'));body.put('versionId',saved.get('versionId'));body.put('sessionToken',saved.get('sessionToken'));run('write',body);
+            Test.startTest();
+            System.assertEquals(true,run('peek',new Map<String,Object>{'key'=>key}).get('available'));
+            OrgLoomNativeCanvases.requireSession((Id)saved.get('id'),(String)saved.get('sessionToken'),false);
             Map<String,Object> restored=run('restore',request(key,token(),1));System.assertEquals(saved.get('id'),restored.get('id'));System.assertNotEquals(saved.get('sessionToken'),restored.get('sessionToken'));
             OrgLoomNativeCanvases.requireSession((Id)restored.get('id'),(String)restored.get('sessionToken'),false);
             try{OrgLoomNativeCanvases.requireSession((Id)saved.get('id'),(String)saved.get('sessionToken'),false);System.assert(false);}catch(OrgLoomNativeCanvases.CanvasException e){System.assert(e.getMessage().contains('SESSION_ENDED'));}
-            OrgLoomNativeCanvases.handle('open',new Map<String,Object>{'id'=>saved.get('id'),'takeover'=>true});
+            Map<String,Object> takeover=(Map<String,Object>)OrgLoomNativeCanvases.handle('open',new Map<String,Object>{'id'=>saved.get('id'),'takeover'=>true});
+            Map<String,Object> peek=run('peek',new Map<String,Object>{'key'=>key});
+            System.assertEquals(false,peek.get('available'));System.assertEquals(true,peek.get('stale'));System.assertEquals(saved.get('id'),peek.get('canvasId'));
+            OrgLoomNativeCanvases.requireSession((Id)saved.get('id'),(String)takeover.get('sessionToken'),false);
             rejects('restore',request(key,token(),1),'taken over');
+            Test.stopTest();
         }
     }
     @IsTest static void revisedCanvasAndRevokedGrantBlockRecovery(){
@@ -69,7 +76,10 @@
         String key=token(),writer=token();
         System.runAs(two){Map<String,Object> opened=(Map<String,Object>)OrgLoomNativeCanvases.handle('open',new Map<String,Object>{'id'=>id,'takeover'=>true});Map<String,Object> body=request(key,writer,1);body.put('canvasId',id);body.put('versionId',opened.get('versionId'));body.put('sessionToken',opened.get('sessionToken'));run('write',body);}
         delete [SELECT Id FROM OrgLoomNativeGrant__c WHERE Canvas__c=:id];
-        System.runAs(two){rejects('restore',request(key,token(),1),'not shared');}
+        System.runAs(two){
+            System.assertEquals(false,run('peek',new Map<String,Object>{'key'=>key}).get('available'));
+            rejects('restore',request(key,token(),1),'not shared');
+        }
     }
     @IsTest static void schedulerAndRemotingAuthorization(){
         Test.startTest();System.schedule('Recovery cleanup test','0 0 1 * * ?',new OrgLoomNativeRecoveryCleanup());Test.stopTest();

@@ -55,6 +55,7 @@ public with sharing class OrgLoomNativeRequests {
                 Schema.SObjectField token=d.fields.getMap().get(field);
                 if(token==null||!OrgLoomNativeController.supported(token.getDescribe()))throw new RequestException('A submitted field is unavailable.');
                 Schema.DescribeFieldResult f=token.getDescribe();
+                if(OrgLoomNativeEncrypted.isField(name,field))throw new RequestException('Encrypted fields must be changed by the canvas owner during upload.');
                 if(!(existing?f.isUpdateable():f.isCreateable())||f.isCalculated()||f.isAutoNumber())throw new RequestException('A submitted field is read-only.');
                 Object value=OrgLoomNativeController.convert(incoming.get(field),f);
                 if(value!=null&&f.getType()==Schema.DisplayType.REFERENCE){

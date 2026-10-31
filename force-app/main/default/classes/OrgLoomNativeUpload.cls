@@ -141,6 +141,8 @@ public with sharing class OrgLoomNativeUpload {
                         if(field=='attributes')continue;
                         Schema.SObjectField token=d.fields.getMap().get(field);if(token==null||!OrgLoomNativeController.supported(token.getDescribe()))throw new UploadException('Unavailable field: '+field);
                         Schema.DescribeFieldResult f=token.getDescribe();Object value=OrgLoomNativeController.convert(values.get(field),f);
+                        // Never write a loaded/masked encrypted value back by accident.
+                        if(OrgLoomNativeEncrypted.isField(name,field)&&!OrgLoomNativeEncrypted.explicit(row,field))throw new UploadException('Choose Replace or Clear for encrypted field '+f.getLabel()+' before uploading.');
                         if(!creating&&value==current.get(field))continue;
                         if(creating&&value==null)continue;
                         if(f.isCalculated()||f.isAutoNumber()||!(creating?f.isCreateable():f.isUpdateable()))throw new UploadException('No permission to write '+field+'.');

@@ -8,6 +8,86 @@
         OrgLoomAccessFixture.grant(u,names);
     }
     private static Map<String,Object> admin(String op,Map<String,Object> body) {return (Map<String,Object>)JSON.deserializeUntyped(OrgLoomNativeAdmin.invoke(op,JSON.serialize(body)));}
+    @IsTest static void recallDenialsIdentifyTheFeatureAndScope() {
+        User u=user('recallmessages');grant(u,new Set<String>{'Access'});
+        System.runAs(u) {
+            insert new List<OrgLoomNativePolicy__c>{
+                new OrgLoomNativePolicy__c(Capability__c='recall-upload',Enabled__c=true),
+                new OrgLoomNativePolicy__c(Capability__c='view-activity-history',Enabled__c=false)
+            };
+            Map<String,Object> history=(Map<String,Object>)JSON.deserializeUntyped(OrgLoomNativeController.invoke('history:list','{}'));
+            System.assertEquals(400,history.get('status'));
+            System.assertEquals('Your administrator has disabled View activity history for the org.',((Map<String,Object>)history.get('data')).get('message'));
+            Map<String,Object> recall=(Map<String,Object>)JSON.deserializeUntyped(OrgLoomNativeController.invoke('history:preflight','{}'));
+            System.assertEquals(400,recall.get('status'));
+            System.assertEquals('Your administrator must grant access to Recall uploads.',((Map<String,Object>)recall.get('data')).get('message'));
+        }
+    }
+    private static void assertExportChecks(Integer expected) {
+        for(String capability:new List<String>{'export-canvas','export-records'})
+            System.assertEquals(expected,((Map<String,Object>)JSON.deserializeUntyped(OrgLoomNativeController.invoke('capabilityCheck',JSON.serialize(new Map<String,Object>{'capability'=>capability})))).get('status'),capability);
+    }
+    @IsTest static void oneExportGrantControlsBothFormatsAndLegacyClients() {
+        User administrator=user('exportadmin'),recipient=user('exportuser');
+        grant(administrator,new Set<String>{'Admin'});grant(recipient,new Set<String>{'Access'});
+        System.runAs(administrator) {
+            List<Object> rows=(List<Object>)admin('features',new Map<String,Object>{'userId'=>recipient.Id}).get('data');
+            Integer exports=0;
+            for(Object raw:rows){Map<String,Object> row=(Map<String,Object>)raw;
+                System.assertNotEquals('export-records',row.get('id'),'The retired permission must not appear in Manage.');
+                if(row.get('id')=='export-canvas'){exports++;System.assertEquals('Export Canvases (CSV/JSON)',row.get('label'));}
+            }
+            System.assertEquals(1,exports);
+            System.assertEquals(400,admin('grant',new Map<String,Object>{'userId'=>recipient.Id,'capability'=>'export-records','enabled'=>true}).get('status'));
+            // Old package grants may remain in stored configuration, but cannot bypass the combined switch.
+            insert new OrgLoomFeatureAccess__c(UserId__c=String.valueOf(recipient.Id),Capability__c='export-records',GrantKey__c=recipient.Id+':export-records',Enabled__c=true);
+            System.runAs(recipient){assertExportChecks(400);}
+            OrgLoomFeatureAccess.setGrant(recipient.Id,'export-canvas',true);
+            System.runAs(recipient){assertExportChecks(200);System.assertEquals(true,OrgLoomNativeAccess.capabilities().get('export-canvas'));}
+            OrgLoomFeatureAccess.setGrant(recipient.Id,'export-canvas',false);
+            System.runAs(recipient){assertExportChecks(400);}
+            OrgLoomFeatureAccess.setGrant(recipient.Id,'export-canvas',true);
+            insert new OrgLoomNativePolicy__c(Capability__c='export-canvas',Enabled__c=false);
+            System.runAs(recipient){assertExportChecks(400);System.assertEquals(false,OrgLoomNativeAccess.capabilities().get('export-canvas'));}
+        }
+    }
+    private static void assertRequestAccess(Boolean allowed) {
+        System.assertEquals(allowed,OrgLoomNativeAccess.capabilities().get('create-slot-canvas'));
+        try {
+            OrgLoomNativeAccess.requireCapability('create-slot-canvas');
+            System.assert(allowed,'Capability checks must require an enabled feature grant.');
+        } catch(OrgLoomNativeAccess.AccessDeniedException e){System.assert(!allowed,e.getMessage());}
+        try {
+            OrgLoomNativeSharedEdits.requests(null,new Map<String,Object>{'drafts'=>new List<Object>{new Map<String,Object>{'tempId'=>'request','slot'=>new Map<String,Object>{'slotId'=>1,'kind'=>'whole-record'}}}});
+            System.assert(allowed,'Request creation must require an enabled feature grant.');
+        } catch(OrgLoomNativeAccess.AccessDeniedException e){System.assert(!allowed,e.getMessage());}
+    }
+    @IsTest static void requestsRequireFeatureGrantsAndOrgPolicyWithoutSubscriptionPlans() {
+        User administrator=user('requestsadmin'),recipient=user('requestsuser'),outsider=user('requestsnone');
+        grant(administrator,new Set<String>{'Admin'});grant(recipient,new Set<String>{'Access'});
+        System.runAs(administrator){
+            assertRequestAccess(false);
+            Boolean found=false;
+            for(Object value:(List<Object>)admin('features',new Map<String,Object>()).get('data')){
+                Map<String,Object> row=(Map<String,Object>)value;
+                if(row.get('id')=='create-slot-canvas'){found=true;System.assertEquals('Create record and field requests',row.get('label'));}
+            }
+            System.assert(found,'The request feature must be configurable in administration.');
+            System.runAs(recipient){assertRequestAccess(false);}
+            System.assertEquals(200,admin('grant',new Map<String,Object>{'userId'=>recipient.Id,'capability'=>'create-slot-canvas','enabled'=>true}).get('status'));
+            System.runAs(recipient){assertRequestAccess(true);}
+            System.assertEquals(200,admin('grant',new Map<String,Object>{'userId'=>recipient.Id,'capability'=>'create-slot-canvas','enabled'=>false}).get('status'));
+            System.runAs(recipient){assertRequestAccess(false);}
+            OrgLoomFeatureAccess.setGrant(recipient.Id,'create-slot-canvas',true);
+            OrgLoomFeatureAccess.setGrant(administrator.Id,'create-slot-canvas',true);
+            System.assertEquals(200,admin('policy',new Map<String,Object>{'capability'=>'create-slot-canvas','enabled'=>false}).get('status'));
+            assertRequestAccess(false);
+            System.runAs(recipient){assertRequestAccess(false);}
+            System.assertEquals(200,admin('policy',new Map<String,Object>{'capability'=>'create-slot-canvas','enabled'=>true}).get('status'));
+            System.runAs(recipient){assertRequestAccess(true);System.assertEquals(false,OrgLoomNativeAccess.capabilities().get('save-canvas'));}
+        }
+        System.runAs(outsider){try{OrgLoomNativeAccess.requireCapability('create-slot-canvas');System.assert(false);}catch(OrgLoomNativeAccess.AccessDeniedException e){System.assert(e.getMessage().contains('grant'));}}
+    }
     @IsTest static void missingLicenseBlocksEvenAdministrators() {
         User u=user('unlicensed');grant(u,new Set<String>{'Admin'});
         System.runAs(u) {

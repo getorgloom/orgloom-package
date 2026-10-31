@@ -32,6 +32,25 @@
             System.assertEquals(1,[SELECT COUNT() FROM Account WHERE Id=:account.Id]);
         }
     }
+    @IsTest static void fiveHundredRecordsRoundTripAndLimitsRemainEnforced() {
+        User actor=[SELECT Id FROM User WHERE Alias='nastore' LIMIT 1];System.runAs(actor) {
+            Map<String,Object> data=snapshot('Draft');List<Object> drafts=new List<Object>();
+            for(Integer i=1;i<=500;i++)drafts.add(new Map<String,Object>{'tempId'=>i,'objectName'=>'Account','values'=>new Map<String,Object>{'Name'=>'Boundary '+i}});
+            data.put('drafts',drafts);
+            Test.startTest();
+            Map<String,Object> saved=(Map<String,Object>)OrgLoomNativeCanvases.handle('create',new Map<String,Object>{'name'=>'500 records','payload'=>data});
+            Map<String,Object> opened=(Map<String,Object>)OrgLoomNativeCanvases.handle('open',new Map<String,Object>{'id'=>saved.get('id'),'sessionToken'=>saved.get('sessionToken')});
+            System.assertEquals(false,opened.get('partialView'));
+            System.assertEquals(500,((List<Object>)((Map<String,Object>)opened.get('payload')).get('drafts')).size());
+            drafts.add(new Map<String,Object>{'tempId'=>501,'objectName'=>'Account','values'=>new Map<String,Object>{'Name'=>'Too many'}});
+            try{OrgLoomNativeCanvases.checkRecoveryPayload(data);System.assert(false,'501 must be rejected');}
+            catch(OrgLoomNativeCanvases.CanvasException e){System.assert(e.getMessage().contains('500 records'));}
+            Map<String,Object> large=snapshot('x'.repeat(1000001));
+            try{OrgLoomNativeCanvases.checkRecoveryPayload(large);System.assert(false,'Size limit must remain');}
+            catch(OrgLoomNativeCanvases.CanvasException e){System.assert(e.getMessage().contains('1 MB'));}
+            Test.stopTest();
+        }
+    }
     @IsTest static void encryptedSaveOpenAndTakeover() {
         User actor=[SELECT Id FROM User WHERE Alias='nastore' LIMIT 1];System.runAs(actor) {
             Map<String,Object> created=(Map<String,Object>)OrgLoomNativeCanvases.handle('create',new Map<String,Object>{'name'=>'Native test canvas','payload'=>snapshot('Private draft')});

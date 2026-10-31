@@ -189,6 +189,7 @@
 			}
 
 			function openModal() {
+				if (deps.canSaveOrExport?.() === false) return;
 				const selectedCount = (canvasState.bulkRecords || []).filter(
 					(r) =>
 						r &&
@@ -245,7 +246,7 @@
 				const scopeAllDisabled = _state.allCount === 0 ? ' disabled' : '';
 				const scopeSelectedDisabled = _state.selectedCount === 0 ? ' disabled' : '';
 				body.innerHTML =
-					'<p class="tag">Downloads current record values, one CSV per object type. Encrypted fields, inaccessible records, and system-managed fields are excluded. Empty fields are listed in __OrgLoom_ClearFields to preserve blanks on re-import.</p>' +
+					'<p class="tag">Downloads current record values, one CSV per object type. Encrypted fields, inaccessible records, and system-managed fields are excluded.</p>' +
 					'<div class="cec-section">' +
 					'<label class="cec-section-head">Scope</label>' +
 					'<label class="cec-opt"><input type="radio" name="cec-scope" value="all"' +
@@ -410,14 +411,18 @@
 			}
 
 			async function verifyCsvExportPermission() {
+				if (deps.canSaveOrExport?.() === false)
+					return { allowed: false, message: 'Only the canvas owner or an editor can export this canvas.' };
 				let response;
 				let data = {};
 				try {
-					response = await csrfFetch('/api/capabilities/export-records/check', {
+					response = await csrfFetch('/api/capabilities/export-canvas/check', {
 						method: 'POST',
 						credentials: 'same-origin',
 					});
 					data = await response.json().catch(() => ({}));
+					if (deps.canSaveOrExport?.() === false)
+						return { allowed: false, message: 'Your canvas access changed. No file was downloaded.' };
 				} catch (_error) {
 					return {
 						allowed: false,

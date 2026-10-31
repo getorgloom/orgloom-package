@@ -161,7 +161,6 @@
 						'<div class="modal-content">' +
 						summaryHtml +
 						crossOrgHtml +
-						'<p class="rom-canvas-only-note">Only the canvas changes. Nothing is sent to Salesforce.</p>' +
 						'</div>' +
 						'<div class="modal-footer">' +
 						'<button class="button secondary" data-rom="cancel">Cancel</button>' +

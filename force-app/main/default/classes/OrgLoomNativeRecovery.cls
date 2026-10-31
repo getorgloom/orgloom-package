@@ -19,7 +19,11 @@ public without sharing class OrgLoomNativeRecovery {
         String key=(String)body.get('key');digest(key);
         List<OrgLoomNativeRecovery__c> found=[SELECT Id,OwnerId,Key__c,WriterHash__c,Sequence__c,CanvasId__c,CanvasVersion__c,CanvasSessionHash__c,Role__c,FileId__c,VersionId__c,Expires__c,SavedAt__c,Status__c FROM OrgLoomNativeRecovery__c WHERE Key__c=:key AND OwnerId=:UserInfo.getUserId() LIMIT 1 FOR UPDATE];
         OrgLoomNativeRecovery__c r=found.isEmpty()?null:found[0];
-        if(op=='peek')return new Map<String,Object>{'available'=>r!=null&&r.Status__c=='active'&&r.Expires__c>System.now(),'savedAt'=>r?.SavedAt__c,'sequence'=>r?.Sequence__c,'canvasId'=>r?.CanvasId__c};
+        if(op=='peek'){
+            Boolean available=r!=null&&r.Status__c=='active'&&r.Expires__c>System.now();
+            Boolean stale=available&&r.CanvasId__c!=null&&!OrgLoomNativeCanvases.recoveryIsCurrent((Id)r.CanvasId__c,r.CanvasSessionHash__c,r.CanvasVersion__c,r.Role__c);
+            return new Map<String,Object>{'available'=>available&&!stale,'stale'=>stale,'savedAt'=>r?.SavedAt__c,'sequence'=>r?.Sequence__c,'canvasId'=>r?.CanvasId__c};
+        }
         if(!new Set<String>{'write','restore','discard'}.contains(op))throw new RecoveryException('Unknown recovery operation.');
         if(r!=null&&(r.Status__c!='active'||r.Expires__c<=System.now()))throw new RecoveryException('RECOVERY_STALE: This recovery draft expired or was discarded.');
         String writer=digest((String)body.get('writer'));

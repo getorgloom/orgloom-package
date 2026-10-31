@@ -44,7 +44,7 @@
     for (const name of ['applyTemplate', 'applyCanvasPayload']) {
       const original = api[name];
       api[name] = async function (payload, options, ...args) {
-        if(window.OrgLoomNativeMigration?.isMigration(payload)&&name==='applyTemplate')return window.OrgLoomNativeMigration.start(payload,options,(ready,opts)=>original.call(this,ready,opts,...args));
+        if(window.OrgLoomNativeMigration?.isMigration(payload)&&name==='applyTemplate')return window.OrgLoomNativeMigration.start(payload,options,(ready,opts)=>original.call(this,ready,opts,...args),deps.beginImportLoad);
         assertImportSource(payload, window.SF_ORG_ID);
         if (options?.importFileName) await requireImport();
         return original.call(this, payload, options, ...args);

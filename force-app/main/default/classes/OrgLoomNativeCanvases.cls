@@ -9,7 +9,8 @@ public without sharing class OrgLoomNativeCanvases {
         String search=(String)body.get('q');if(search==null)search='';if(search.length()>100)throw new CanvasException('Search is too long.');
         String likeValue='%'+search.replace('%','\\%').replace('_','\\_')+'%';
         Id current=UserInfo.getUserId();
-        List<User> users=[SELECT Id,Name FROM User WHERE IsActive=true AND UserType='Standard' AND Name LIKE :likeValue AND Id!=:current WITH USER_MODE ORDER BY Name LIMIT 20];
+        Set<Id> eligible=eligibleRecipients(null);
+        List<User> users=[SELECT Id,Name FROM User WHERE IsActive=true AND UserType='Standard' AND Id IN :eligible AND Name LIKE :likeValue AND Id!=:current WITH USER_MODE ORDER BY Name,Id LIMIT 20];
         List<Object> result=new List<Object>();for(User u:users)result.add(new Map<String,Object>{'id'=>u.Id,'name'=>u.Name});
         return new Map<String,Object>{'users'=>result};
     }
@@ -25,12 +26,52 @@ public without sharing class OrgLoomNativeCanvases {
         if(userId==c.OwnerId||!new Set<String>{'viewer','contributor','editor','none'}.contains(access))throw new CanvasException('Invalid recipient or role.');
         List<User> recipients=[SELECT Id,Name FROM User WHERE Id=:userId AND IsActive=true AND UserType='Standard' WITH USER_MODE];
         if(recipients.isEmpty())throw new CanvasException('Recipient is unavailable.');
+        if(access!='none'&&!canReceive(userId))throw new CanvasException('This user cannot receive shared canvases. Ask an administrator to grant Org Loom access and enable Receive shared canvases and Open saved canvases for the org and this user.');
         String key=c.Id+':'+userId;
         if(access=='none')delete [SELECT Id FROM OrgLoomNativeGrant__c WHERE Key__c=:key];
         else upsert new OrgLoomNativeGrant__c(Key__c=key,Canvas__c=c.Id,Recipient__c=userId,Role__c=access) Key__c;
         if(c.Holder__c==userId){c.SessionHash__c=null;c.Expires__c=null;c.Holder__c=null;update c;}
         OrgLoomNativeActivity.record('canvas_shared','success',c.Id,'Recipient '+userId+'; access '+access+'.');
         return new Map<String,Object>{'ok'=>true,'recipient'=>new Map<String,Object>{'name'=>recipients[0].Name},'notificationMode'=>'saved-canvases'};
+    }
+    private static Boolean canReceive(Id userId) {
+        return eligibleRecipients(new Set<Id>{userId}).contains(userId);
+    }
+    // One eligibility rule for the picker and the write boundary. Recompute on
+    // submission so revoked permissions cannot be bypassed with a stale selection.
+    private static Set<Id> eligibleRecipients(Set<Id> candidates) {
+        Set<Id> eligible=new Set<Id>();
+        Set<String> required=new Set<String>{'receive-canvas','open-saved-canvas'};
+        Map<String,Boolean> policies=OrgLoomNativeAccess.policies();
+        for(String capability:required)if(policies.get(capability)==false)return eligible;
+        Set<String> userKeys=new Set<String>();
+        if(candidates!=null)for(Id userId:candidates)userKeys.add(String.valueOf(userId));
+        List<OrgLoomFeatureAccess__c> grants=candidates==null
+            ? [SELECT UserId__c,Capability__c FROM OrgLoomFeatureAccess__c WHERE Enabled__c=true AND Capability__c IN :required]
+            : [SELECT UserId__c,Capability__c FROM OrgLoomFeatureAccess__c WHERE Enabled__c=true AND Capability__c IN :required AND UserId__c IN :userKeys];
+        Map<Id,Set<String>> features=new Map<Id,Set<String>>();
+        for(OrgLoomFeatureAccess__c grant:grants){
+            Id userId=(Id)grant.UserId__c;
+            if(!features.containsKey(userId))features.put(userId,new Set<String>());
+            features.get(userId).add(grant.Capability__c);
+        }
+        Set<Id> featureUsers=new Set<Id>();
+        for(Id userId:features.keySet())if(features.get(userId).containsAll(required))featureUsers.add(userId);
+        if(featureUsers.isEmpty())return eligible;
+        String ns=OrgLoomNativeAccess.packageNamespace();
+        Set<Id> permissionSets=new Set<Id>(),profiles=new Set<Id>();
+        // Match the actual custom permission, including custom sets, profile
+        // grants and calculated groups; labels and permission-set names vary.
+        for(SetupEntityAccess grant:[SELECT ParentId,Parent.ProfileId FROM SetupEntityAccess
+            WHERE SetupEntityId IN (SELECT Id FROM CustomPermission WHERE DeveloperName='OrgLoomNative_Access' AND NamespacePrefix=:ns)
+            AND Parent.Type!='Muting']){
+            permissionSets.add(grant.ParentId);
+            if(grant.Parent.ProfileId!=null)profiles.add(grant.Parent.ProfileId);
+        }
+        for(PermissionSetAssignment assignment:[SELECT AssigneeId FROM PermissionSetAssignment
+            WHERE AssigneeId IN :featureUsers AND PermissionSetId IN :permissionSets AND IsActive=true])eligible.add(assignment.AssigneeId);
+        for(User recipient:[SELECT Id FROM User WHERE Id IN :featureUsers AND ProfileId IN :profiles])eligible.add(recipient.Id);
+        return eligible;
     }
     private static String context(OrgLoomNativeCanvas__c c){return UserInfo.getOrganizationId()+':'+c.Id+':'+c.Revision__c;}
     private static OrgLoomNativeCanvas__c locked(Id id){return [SELECT Id,OwnerId,Title__c,FileId__c,VersionId__c,Revision__c,Holder__c,Holder__r.Name,SessionHash__c,Expires__c FROM OrgLoomNativeCanvas__c WHERE Id=:id LIMIT 1 FOR UPDATE];}
@@ -64,11 +105,11 @@ public without sharing class OrgLoomNativeCanvases {
         if(access!='owner'&&access!='editor')throw new CanvasException('Only canvas owners and editors can run scripts or auto-fill records.');
     }
     private static void checkEnvelope(Map<String,Object> payload) {
-        if(payload==null||JSON.serialize(payload).length()>250000)throw new CanvasException('Canvas is too large for this native build (250 KB).');
+        if(payload==null||JSON.serialize(payload).length()>1000000)throw new CanvasException('Canvas exceeds the 1 MB save and recovery limit.');
         Map<String,Object> meta=(Map<String,Object>)payload.get('_meta');
         if(meta==null||meta.get('savedFrom')!=UserInfo.getOrganizationId())throw new CanvasException('Reconcile imported records to this org before saving.');
         List<Object> loaded=(List<Object>)payload.get('loadedRecords'),drafts=(List<Object>)payload.get('drafts');
-        if(loaded==null||drafts==null||loaded.size()+drafts.size()>100)throw new CanvasException('Saved canvases support up to 100 records in this build.');
+        if(loaded==null||drafts==null||loaded.size()+drafts.size()>500)throw new CanvasException('Saved canvases support up to 500 records in this build.');
     }
     // Recovery is private work, never a published canvas revision. Reuse the
     // same envelope limits, projection and lease checks as saved canvases.
@@ -79,13 +120,24 @@ public without sharing class OrgLoomNativeCanvases {
         if(c.VersionId__c!=version)throw new CanvasException('RECOVERY_STALE: The saved canvas changed. Reopen it.');
         return new Map<String,Object>{'hash'=>c.SessionHash__c,'role'=>role(c)};
     }
-    public static Map<String,Object> resumeRecovery(Id id,String hash,String version,String previousRole) {
+    private static OrgLoomNativeCanvas__c recoveryCanvas(Id id,String hash,String version,String previousRole) {
         OrgLoomNativeAccess.requireCapability('open-saved-canvas');
         OrgLoomNativeCanvas__c c=locked(id);String access=role(c);
         // Expiry alone does not invalidate a draft. A release, takeover, role
         // change or newer saved revision does. Never silently regain authority.
         if(c.Holder__c!=UserInfo.getUserId()||c.SessionHash__c!=hash||c.VersionId__c!=version||access!=previousRole||access=='viewer')
             throw new CanvasException('RECOVERY_STALE: This canvas was saved, closed or taken over elsewhere. Open its latest saved version.');
+        return c;
+    }
+    public static Boolean recoveryIsCurrent(Id id,String hash,String version,String previousRole) {
+        // Read-only eligibility check: never acquire or rotate a lease at peek.
+        try{recoveryCanvas(id,hash,version,previousRole);return true;}
+        catch(CanvasException e){return false;}
+        catch(OrgLoomNativeAccess.AccessDeniedException e){return false;}
+        catch(QueryException e){return false;}
+    }
+    public static Map<String,Object> resumeRecovery(Id id,String hash,String version,String previousRole) {
+        OrgLoomNativeCanvas__c c=recoveryCanvas(id,hash,version,previousRole);String access=role(c);
         Map<String,Object> result=info(c,access);
         OrgLoomNativeProjection.View current=OrgLoomNativeProjection.project(payload(c));
         result.put('nativeNextSlotId',((Map<String,Object>)current.payload.get('_meta')).get('nativeNextSlotId'));
@@ -116,17 +168,111 @@ public without sharing class OrgLoomNativeCanvases {
     private static void store(OrgLoomNativeCanvas__c c,Map<String,Object> body) {
         // Private sink: callers validate the visible delta before merging hidden
         // contents from the existing authenticated encrypted revision.
+        body=OrgLoomNativeEncrypted.canvas(body);
         checkEnvelope(body);c.Revision__c=(c.Revision__c==null?0:c.Revision__c)+1;
         ContentVersion v=new ContentVersion(Title=c.Title__c,PathOnClient='canvas.orgloom.enc',VersionData=OrgLoomNativeCrypto.seal(JSON.serialize(body),context(c)));
         if(c.FileId__c!=null)v.ContentDocumentId=(Id)c.FileId__c;
         insert v;v=[SELECT Id,ContentDocumentId FROM ContentVersion WHERE Id=:v.Id];c.FileId__c=v.ContentDocumentId;c.VersionId__c=v.Id;update c;
     }
     private static Map<String,Object> info(OrgLoomNativeCanvas__c c,String access){return new Map<String,Object>{'id'=>c.Id,'title'=>c.Title__c,'ownedByMe'=>access=='owner','role'=>access,'recipientRole'=>access=='owner'?null:access,'versionId'=>c.VersionId__c};}
+    private static Map<String,Object> requestRow(Map<String,Object> data,String identity) {
+        for(String key:new List<String>{'loadedRecords','drafts'})for(Object raw:(List<Object>)data.get(key)){
+            Map<String,Object> row=(Map<String,Object>)raw;
+            if(OrgLoomNativeProjection.identity(row)==identity)return row;
+        }
+        return null;
+    }
+    private static Map<String,Object> requestEndpoint(Map<String,Object> row) {
+        Map<String,Object> slot=(Map<String,Object>)row.get('slot');
+        return slot!=null?new Map<String,Object>{'kind'=>'slot','ref'=>slot.get('slotId')}
+            :new Map<String,Object>{'kind'=>row.get('loadedFromId')!=null?'loaded':'draft','ref'=>row.get('loadedFromId')!=null?row.get('loadedFromId'):row.get('tempId')};
+    }
+    // Narrow write boundary: existing rows accept only request metadata. No
+    // client values, layout, deletes or unrelated canvas changes are persisted.
+    private static Object saveRequest(OrgLoomNativeCanvas__c c,String access,String token,Map<String,Object> body) {
+        OrgLoomNativeAccess.requireCapability('save-canvas');
+        OrgLoomNativeAccess.requireCapability('create-slot-canvas');
+        requireSession(c.Id,token,false);
+        if(access!='owner'&&access!='editor')throw new CanvasException('Only canvas owners and editors can change requests.');
+        if(body.get('expectedVersionId')!=c.VersionId__c)throw new CanvasException('The saved canvas changed. Reopen it before saving requests.');
+        Map<String,Object> incoming=(Map<String,Object>)body.get('record');
+        if(incoming==null)throw new CanvasException('A request record is required.');
+        if(incoming.get('loadedFromId')==null&&incoming.get('tempId')==null)throw new CanvasException('Reopen this canvas before changing requests.');
+        String identity=OrgLoomNativeProjection.identity(incoming),name=(String)incoming.get('objectName');
+        Map<String,Object> full=payload(c),visible=OrgLoomNativeProjection.project(full).payload;
+        Map<String,Object> original=requestRow(full,identity),shown=requestRow(visible,identity);
+        Boolean adding=original==null;
+        Map<String,Object> previousVisible=adding?OrgLoomNativeProjection.copy(visible):null;
+        if(original!=null&&(shown==null||original.get('objectName')!=name))throw new CanvasException('This request record is unavailable.');
+        Map<String,Object> slot=(Map<String,Object>)incoming.get('slot'),oldSlot=original==null?null:(Map<String,Object>)original.get('slot');
+        if(oldSlot!=null){
+            Map<String,Object> shownSlot=(Map<String,Object>)shown.get('slot');
+            if(shownSlot==null||JSON.serialize(oldSlot.get('fields'))!=JSON.serialize(shownSlot.get('fields')))
+                throw new CanvasException('Some requested fields are unavailable to you. Ask the canvas owner to change this request.');
+            if(slot!=null&&(slot.get('slotId')!=oldSlot.get('slotId')||slot.get('kind')!=oldSlot.get('kind')))
+                throw new CanvasException('The request identity cannot be changed.');
+        }
+        if(slot!=null){
+            if(slot.get('slotId')==null||!new Set<String>{'fields','whole-record'}.contains((String)slot.get('kind')))
+                throw new CanvasException('Invalid request.');
+            for(String key:new List<String>{'loadedRecords','drafts'})for(Object raw:(List<Object>)full.get(key)){
+                Map<String,Object> other=(Map<String,Object>)raw,otherSlot=(Map<String,Object>)other.get('slot');
+                if(otherSlot!=null&&otherSlot.get('slotId')==slot.get('slotId')&&OrgLoomNativeProjection.identity(other)!=identity)
+                    throw new CanvasException('This request identifier is already in use. Reopen the canvas.');
+            }
+            if(slot.get('assigneeSfUserId')!=null&&!canReceive((Id)(String)slot.get('assigneeSfUserId')))
+                throw new CanvasException('This teammate cannot receive shared canvases. Choose another teammate.');
+            Schema.DescribeSObjectResult d=OrgLoomNativeController.objectInfo(name);
+            if(slot.get('kind')=='fields'){
+                List<Object> fields=(List<Object>)slot.get('fields');
+                if(fields==null||fields.isEmpty())throw new CanvasException('Select at least one field.');
+                for(Object raw:fields){Schema.SObjectField f=d.fields.getMap().get((String)raw);
+                    if(f==null||!OrgLoomNativeController.supported(f.getDescribe())||f.getDescribe().getType()==Schema.DisplayType.ENCRYPTEDSTRING
+                        ||!(incoming.get('loadedFromId')!=null?f.getDescribe().isUpdateable():f.getDescribe().isCreateable()))
+                        throw new CanvasException('A requested field is unavailable or read-only.');
+                }
+            }
+        }else if(original==null)throw new CanvasException('The request no longer exists.');
+        Map<String,Object> oldEndpoint=original==null?null:requestEndpoint(original),schemaObject;
+        if(original==null){
+            original=new Map<String,Object>();
+            for(String key:new List<String>{'loadedFromId','tempId','canvasRecordId','objectName','x','y'})if(incoming.containsKey(key))original.put(key,incoming.get(key));
+            if(incoming.get('loadedFromId')==null)original.put('values',incoming.get('values')==null?new Map<String,Object>():incoming.get('values'));
+            shown=OrgLoomNativeProjection.copy(original);
+            String listKey=incoming.get('loadedFromId')!=null?'loadedRecords':'drafts';
+            ((List<Object>)full.get(listKey)).add(original);((List<Object>)visible.get(listKey)).add(shown);
+            Map<String,Object> schema=(Map<String,Object>)body.get('schemaObject');
+            Boolean found=false;for(Object raw:(List<Object>)((Map<String,Object>)full.get('schema')).get('objects'))if(((Map<String,Object>)raw).get('name')==name)found=true;
+            if(!found&&schema!=null){
+                if(schema.get('name')!=name)throw new CanvasException('Invalid request object.');
+                schemaObject=OrgLoomNativeProjection.copy(schema);
+                ((List<Object>)((Map<String,Object>)full.get('schema')).get('objects')).add(schemaObject);
+                ((List<Object>)((Map<String,Object>)visible.get('schema')).get('objects')).add(schemaObject);
+            }
+        }
+        if(slot==null){original.remove('slot');shown.remove('slot');}
+        else{original.put('slot',slot);shown.put('slot',slot);}
+        // Changing a record into/out of a request changes its serialized link
+        // endpoint, not the business relationship. Preserve hidden links too.
+        if(oldEndpoint!=null)for(Map<String,Object> data:new List<Map<String,Object>>{full,visible})for(Object raw:(List<Object>)data.get('associations'))for(String side:new List<String>{'from','to'}){
+            Map<String,Object> link=(Map<String,Object>)raw,endpoint=(Map<String,Object>)link.get(side);
+            if(endpoint.get('kind')==oldEndpoint.get('kind')&&String.valueOf(endpoint.get('ref'))==String.valueOf(oldEndpoint.get('ref')))link.put(side,requestEndpoint(original));
+        }
+        checkPayload(visible);
+        if(OrgLoomNativeProjection.project(visible).partial)throw new CanvasException('The request includes unavailable content.');
+        if(adding&&access=='editor')OrgLoomNativeSharedEdits.validate(previousVisible,visible);
+        store(c,full);
+        Map<String,Object> result=info(c,access);
+        List<Object> safeRows=(List<Object>)OrgLoomNativeEncrypted.canvas(new Map<String,Object>{'drafts'=>new List<Object>{shown},'loadedRecords'=>new List<Object>()}).get('drafts');
+        result.put('record',safeRows[0]);result.put('schemaObject',schemaObject);
+        OrgLoomNativeActivity.record('canvas_saved','success',c.Id,'Request changes saved.');return result;
+    }
     public static Object handle(String op,Map<String,Object> body) {
         OrgLoomNativeAccess.requireAccess();Savepoint checkpoint=Database.setSavepoint();
         try {
             if(op=='list'){
-                OrgLoomNativeAccess.requireCapability('open-saved-canvas');Set<Id> shared=new Set<Id>();for(OrgLoomNativeGrant__c g:[SELECT Canvas__c FROM OrgLoomNativeGrant__c WHERE Recipient__c=:UserInfo.getUserId()])shared.add(g.Canvas__c);
+                OrgLoomNativeAccess.requireCapability('open-saved-canvas');Set<Id> shared=new Set<Id>();
+                if(canReceive(UserInfo.getUserId()))for(OrgLoomNativeGrant__c g:[SELECT Canvas__c FROM OrgLoomNativeGrant__c WHERE Recipient__c=:UserInfo.getUserId()])shared.add(g.Canvas__c);
                 List<Object> items=new List<Object>();for(OrgLoomNativeCanvas__c c:[SELECT Id,Title__c,OwnerId,VersionId__c FROM OrgLoomNativeCanvas__c WHERE OwnerId=:UserInfo.getUserId() OR Id IN :shared ORDER BY LastModifiedDate DESC LIMIT 100]){try{items.add(info(c,role(c)));}catch(Exception ignored){}}
                 return new Map<String,Object>{'items'=>items,'canOpenOwnedCanvases'=>true};
             }
@@ -180,6 +326,7 @@ public without sharing class OrgLoomNativeCanvases {
                 Integer submitted=OrgLoomNativeRequests.apply(contents,(List<Object>)body.get('fills'));
                 store(c,contents);OrgLoomNativeActivity.record('requests_submitted','success',id,submitted+' requested changes submitted.');return new Map<String,Object>{'submitted'=>submitted,'versionId'=>c.VersionId__c};
             }
+            if(op=='request')return saveRequest(c,access,token,body);
             if(op=='save'){
                 OrgLoomNativeAccess.requireCapability('save-canvas');requireSession(id,token,false);
                 if(access!='owner'&&access!='editor')throw new CanvasException('Contributors can only submit requested changes.');

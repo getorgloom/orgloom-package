@@ -8,7 +8,9 @@ test('managed build isolates required released metadata from current native sour
   const project=JSON.parse(fs.readFileSync(path.join(output,'sfdx-project.json'),'utf8'));
   assert.equal(project.namespace,'orgloom');
   assert.equal(project.packageAliases.Orgloom,'0Hoao0000003RYLCA2');
-  assert.equal(project.packageDirectories[0].ancestorId,'04tao000005eJsHAAU');
+  const release=JSON.parse(fs.readFileSync(path.join(root,'config/released-package.json'),'utf8'));
+  assert.equal(release.released,true);
+  assert.equal(project.packageDirectories[0].ancestorId,release.subscriberPackageVersionId);
   assert.equal(project.packageDirectories[0].postInstallScript,'OrgLoomNativeInstall');
   const base=path.join(output,'force-app/main/default');
   const native=path.join(root,'force-app/main/default');

@@ -2,11 +2,56 @@
     @TestSetup static void setup(){
         List<User> users=new List<User>();for(String alias:new List<String>{'nashown','nashcon','nashedit'})users.add(new User(ProfileId=UserInfo.getProfileId(),Username=alias+System.now().getTime()+'@example.invalid',Email=alias+'@example.invalid',Alias=alias,LastName=alias,TimeZoneSidKey='America/Phoenix',LocaleSidKey='en_US',EmailEncodingKey='UTF-8',LanguageLocaleKey='en_US'));insert users;
 
-        for(User u:users)OrgLoomAccessFixture.grant(u,new Set<String>{'Access','save-canvas','open-saved-canvas','receive-canvas','share-canvas','create-slot-canvas'});
+        for(User u:users)OrgLoomAccessFixture.grant(u,new Set<String>{'Access','save-canvas','open-saved-canvas','receive-canvas','create-slot-canvas','share-canvas'});
     }
     private static User actor(String alias){return [SELECT Id FROM User WHERE Alias=:alias LIMIT 1];}
     private static Map<String,Object> snapshot(){return new Map<String,Object>{'_meta'=>new Map<String,Object>{'savedFrom'=>UserInfo.getOrganizationId()},'loadedRecords'=>new List<Object>(),'drafts'=>new List<Object>{new Map<String,Object>{'tempId'=>'request-one','objectName'=>'Account','values'=>new Map<String,Object>(),'slot'=>new Map<String,Object>{'slotId'=>1,'kind'=>'whole-record'}}},'associations'=>new List<Object>()};}
     private static Map<String,Object> run(String operation,Map<String,Object> body){return (Map<String,Object>)OrgLoomNativeCanvases.handle(operation,body);}
+    @IsTest static void cannotShareWithRecipientWithoutReceivePermission(){
+        User owner=actor('nashown'),recipient=actor('nashcon');String userKey=String.valueOf(recipient.Id);
+        delete [SELECT Id FROM OrgLoomFeatureAccess__c WHERE UserId__c=:userKey AND Capability__c='receive-canvas'];
+        System.runAs(owner){
+            Map<String,Object> saved=run('create',new Map<String,Object>{'name'=>'Permission fixture','payload'=>snapshot()});
+            for(String access:new List<String>{'viewer','contributor','editor'}){
+                try{run('grant',new Map<String,Object>{'id'=>saved.get('id'),'recipientSfUserId'=>recipient.Id,'role'=>access});System.assert(false,'Sharing must be denied');}
+                catch(OrgLoomNativeCanvases.CanvasException e){System.assert(e.getMessage().contains('cannot receive shared canvases'));}
+            }
+            System.assertEquals(0,[SELECT COUNT() FROM OrgLoomNativeGrant__c]);
+            System.assertEquals(1,((List<Object>)run('list',new Map<String,Object>()).get('items')).size(),'Owned canvases stay visible');
+        }
+    }
+    @IsTest static void revokedReceivePermissionHidesSharesAndAllowsRemoval(){
+        User owner=actor('nashown'),recipient=actor('nashcon');Map<String,Object> saved;
+        System.runAs(owner){
+            saved=run('create',new Map<String,Object>{'name'=>'Revoked fixture','payload'=>snapshot()});
+            run('grant',new Map<String,Object>{'id'=>saved.get('id'),'recipientSfUserId'=>recipient.Id,'role'=>'viewer'});
+        }
+        String userKey=String.valueOf(recipient.Id);
+        update new OrgLoomFeatureAccess__c(Id=[SELECT Id FROM OrgLoomFeatureAccess__c WHERE UserId__c=:userKey AND Capability__c='receive-canvas'].Id,Enabled__c=false);
+        System.runAs(recipient){
+            System.assertEquals(0,((List<Object>)run('list',new Map<String,Object>()).get('items')).size());
+            try{run('open',new Map<String,Object>{'id'=>saved.get('id')});System.assert(false,'Direct open must be denied');}
+            catch(OrgLoomNativeAccess.AccessDeniedException e){System.assert(e.getMessage().contains('Receive shared canvases'));}
+        }
+        System.runAs(owner){
+            run('grant',new Map<String,Object>{'id'=>saved.get('id'),'recipientSfUserId'=>recipient.Id,'role'=>'none'});
+            System.assertEquals(0,[SELECT COUNT() FROM OrgLoomNativeGrant__c]);
+        }
+    }
+    @IsTest static void orgReceivePolicyBlocksNewSharesAndHidesExistingShares(){
+        User owner=actor('nashown'),recipient=actor('nashcon');Map<String,Object> saved;
+        System.runAs(owner){
+            saved=run('create',new Map<String,Object>{'name'=>'Org policy fixture','payload'=>snapshot()});
+            run('grant',new Map<String,Object>{'id'=>saved.get('id'),'recipientSfUserId'=>recipient.Id,'role'=>'viewer'});
+        }
+        insert new OrgLoomNativePolicy__c(Capability__c='receive-canvas',Enabled__c=false);
+        System.runAs(owner){
+            try{run('grant',new Map<String,Object>{'id'=>saved.get('id'),'recipientSfUserId'=>actor('nashedit').Id,'role'=>'editor'});System.assert(false);}
+            catch(OrgLoomNativeCanvases.CanvasException e){System.assert(e.getMessage().contains('cannot receive shared canvases'));}
+            System.assertEquals(1,((List<Object>)run('list',new Map<String,Object>()).get('items')).size());
+        }
+        System.runAs(recipient){System.assertEquals(0,((List<Object>)run('list',new Map<String,Object>()).get('items')).size());}
+    }
     @IsTest static void sharingRequestsAndRevocation(){
         User owner=actor('nashown'),contributor=actor('nashcon');Map<String,Object> saved;
         System.runAs(owner){

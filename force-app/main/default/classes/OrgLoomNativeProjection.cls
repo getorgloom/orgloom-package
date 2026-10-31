@@ -67,7 +67,7 @@ public with sharing class OrgLoomNativeProjection {
         }return result;
     }
     public static View project(Map<String,Object> source){
-        View view=new View();Map<String,Object> full=copy(source);Set<Id> allowed=readable(full);
+        View view=new View();Map<String,Object> full=OrgLoomNativeEncrypted.canvas(source);Set<Id> allowed=readable(full);
         view.payload=only(full,new Set<String>{'_meta','schema','loadedRecords','drafts','associations'});
         view.payload.put('_meta',only(asMap(full.get('_meta')),new Set<String>{'app','version','savedFrom','savedBy','savedByName'}));
         Map<String,Map<String,Object>> originals=rows(full),visible=new Map<String,Map<String,Object>>();

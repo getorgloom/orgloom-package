@@ -6041,6 +6041,9 @@ body.canvas-share-banner-active .presence-saved-banner {
 	font-size: 0.8rem;
 	white-space: nowrap;
 }
+.banner.upload-conflict-banner {
+	border-left: 0;
+}
 .upload-conflict-list {
 	display: flex;
 	flex-direction: column;
@@ -7992,18 +7995,20 @@ button.confirm-danger:hover {
 .migrate-match-modal .mm-record-preview dt { color: var(--ink-soft); }
 .migrate-match-modal .mm-record-preview dd { margin: 0; white-space: pre-wrap; }
 .migrate-match-modal .mm-action-segments {
-	display: flex;
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 4px;
+	box-sizing: border-box;
 	width: 100%;
 	min-width: 0;
 	margin: 0;
-	padding: 2px;
-	border: 1px solid var(--border);
-	border-radius: 4px;
-	background: var(--bg-inset);
+	padding: 0;
+	border: 0;
 }
 .migrate-match-modal .mm-action-segments label {
 	position: relative;
-	flex: 1 0 auto;
+	display: flex;
+	min-width: 0;
 	margin: 0;
 	cursor: pointer;
 }
@@ -8014,22 +8019,35 @@ button.confirm-danger:hover {
 	opacity: 0;
 }
 .migrate-match-modal .mm-action-segments span {
-	display: block;
-	padding: 0.4em 0.5em;
-	border-radius: 2px;
-	color: var(--ink-soft);
+	display: grid;
+	place-items: center;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 38px;
+	padding: 0.4em 0.35em;
+	border: 1px solid color-mix(in srgb, var(--ink) 28%, var(--border));
+	border-radius: 4px;
+	background: var(--bg-elev);
+	color: var(--ink);
 	font-size: 0.78rem;
 	font-weight: 400;
 	text-align: center;
-	white-space: nowrap;
+	line-height: 1.25;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+.migrate-match-modal .mm-action-segments:not(:disabled) label:hover span {
+	border-color: var(--accent);
 }
 .migrate-match-modal .mm-action-radio:checked + span {
-	background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev));
-	color: var(--accent);
+	border-color: var(--accent);
+	background: var(--accent);
+	color: #181b20;
+	font-weight: 600;
 }
 .migrate-match-modal .mm-action-radio:focus-visible + span {
-	outline: 2px solid var(--accent);
-	outline-offset: -2px;
+	outline: 2px solid var(--ink);
+	outline-offset: 2px;
 }
 .migrate-match-modal .mm-action-segments:disabled {
 	opacity: 0.5;

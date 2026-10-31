@@ -1,18 +1,20 @@
 # Native managed package
 
-The native app is the next version of the existing **Orgloom** second-generation managed package (`0Hoao0000003RYLCA2`, namespace `orgloom`). Version 0.6 descends from released version 0.5.0.12 (`04tao000005dalVAAQ`). We assume no customer installations and do not migrate hosted canvas ciphertext into the native format. Released-component compatibility rules still apply.
+The native app is the next version of the existing **Orgloom** second-generation managed package (`0Hoao0000003RYLCA2`, namespace `orgloom`). Version 0.7 descends from released version 0.6.0.2 (`04tao000005eJsHAAU`), which descends from 0.5.0.12 (`04tao000005dalVAAQ`). We assume no customer installations and do not migrate hosted canvas ciphertext into the native format. Released-component compatibility rules still apply.
 
 ## Released version
 
-**0.6.0.2**, released 2026-10-23: `04tao000005eJsHAAU`.
+**0.7.0.15**, released 2026-10-30: `04tao000005eOojAAE`.
 
-[Install in production or a Developer Edition org](https://login.salesforce.com/packaging/installPackage.apexp?p0=04tao000005eJsHAAU) · [Install in a sandbox](https://test.salesforce.com/packaging/installPackage.apexp?p0=04tao000005eJsHAAU).
+[Install in production or a Developer Edition org](https://login.salesforce.com/packaging/installPackage.apexp?p0=04tao000005eOojAAE) · [Install in a sandbox](https://test.salesforce.com/packaging/installPackage.apexp?p0=04tao000005eOojAAE).
 
-Choose **Install for Admins Only**, then assign ordinary users the base permission sets and appropriate features as described below. This release is production-installable; it is not an AppExchange security-review approval. Commercial LMA setup and AppExchange listing remain separate.
+Choose **Install for Admins Only**, then assign app permissions and individual feature grants as described below. This version is production-installable; AppExchange security review and commercial licensing remain separate.
 
-Validation receipts are under `output/package-final-*`: 94% Apex coverage, 123/123 installed Apex tests, 125/125 local tests, and successful fresh/upgrade checks. The upgrade started at released 0.5.0.12. Both installed orgs passed encrypted save/open, the protected-key subscriber boundary, lease protection, uploads and Recall. Upload and Recall checks run in separate transactions, matching remoting requests; their test Account is removed by Recall. Encryption-only test fixtures are rolled back. Scratch-org data is disposable and expires automatically.
+The release includes the current native canvas code, including sharing/access checks, request autosave, encrypted-field handling, recovery/takeover fixes, migration/upload fixes, and the latest UI changes. Two activity-test fixtures were corrected: shared recipients need Open saved canvases, and non-admin users must not inherit the installer profile's admin permission.
 
-The native UAT org was not replaced with the managed package. It still runs its separate unpackaged development deployment. The build now targets 0.7.0.NEXT with released 0.6.0.2 as its ancestor. No new Salesforce package version is created by source publication.
+Validation receipts are under `test-results/install-release-final-*`: **95% Apex coverage**, **184/184 installed Apex tests**, and **216/216 local native tests**. Fresh installation and upgrade from 0.6.0.2 passed. An encrypted canvas saved by 0.6 remained readable after the upgrade. Installer permissions, the protected-key boundary, encrypted save/open, lease protection, uploads and separate-request Recall passed. The earlier 0.7.0.14 candidate also passed an upgrade path through 0.5.0.12 and 0.6.0.2; it remains an unreleased beta. Validation used disposable scratch orgs, not UAT business data. No new browser UI verification is claimed for this release.
+
+The public website/email changes are local and await deployment. After deployment, `https://orgloom.com/install` and `https://orgloom.com/install/sandbox` redirect to this version. The next managed build targets **0.8.0.NEXT**, with this release as its ancestor. The installed package in orguat was not upgraded by this release process.
 
 ## Cleanup validation, 2026-10-23
 
@@ -21,6 +23,10 @@ Salesforce accepted beta **0.7.0.1** (`04tao000005eKA1AAM`), request `08cao00000
 This successful build **retains** released metadata in `compatibility`; it does not establish that component deletion is permitted. Earlier validated build attempts rejected deleting the legacy objects, ECA settings, old feature custom permissions, and `OrgLoomNativeFeature__mdt.Permission__c`. A Salesforce Partner Support case must enable component removal before those can be omitted. Global Apex has additional restrictions. The source cleanup removes the obsolete standalone package project and unused smoke-test permission set, while separating required compatibility metadata from native development.
 
 Local validation: 139 native tests and 2 publication tests passed. Fresh installation in the disposable `orgloom-legacy-cleanup-check` scratch org succeeded. The installer smoke check verified an active package license, only `OrgLoomNative_Admin` assigned to the installer, all native feature grants initially disabled, and working capabilities access. The recovery cleanup job is `WAITING` on daily cron `0 0 2 * * ?`. This pass did not run an upgrade installation or promote the beta. Receipts are under `output/legacy-cleanup-*`; the removal details and a support-case draft are in `compatibility/README.md`.
+
+## Stable public installation links
+
+The welcome email uses `https://orgloom.com/install`; sandboxes use `https://orgloom.com/install/sandbox`. These public routes return uncached 302 redirects to the released `subscriberPackageVersionId` in `config/released-package.json`. After validating and promoting a new Salesforce version, update that release manifest and deploy the website. Existing emails then resolve to the new version without rewriting the email template. Website deployment remains separate from package creation and promotion.
 
 ## Sources and composition
 

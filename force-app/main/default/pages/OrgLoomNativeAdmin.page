@@ -5,7 +5,7 @@
     <apex:outputPanel rendered="{!allowed}" layout="block">
       <div class="controls panel"><div class="field search-field"><label for="search">Find user</label><input id="search" type="search" placeholder="Name or username"/></div><button id="find" class="primary" type="button">Search</button><div class="field user-picker"><label for="user">Salesforce user</label><select id="user" aria-label="Salesforce user"></select></div></div>
       <p id="status" class="result-status" role="status" aria-live="polite"></p>
-      <div class="table-wrap panel"><table class="feature-table" aria-label="Feature access"><thead><tr><th>Feature</th><th>Enabled for user</th><th>Enabled for org</th><th>Availability</th></tr></thead><tbody id="features"></tbody></table></div>
+      <div class="table-wrap panel"><table class="feature-table" aria-label="Feature access"><thead><tr><th scope="col">Feature</th><th scope="col">Enabled for org</th><th scope="col" id="user-feature-heading" hidden="hidden">Enabled for user</th></tr></thead><tbody id="features"></tbody></table></div>
       <script>window.__ORGLOOM_ADMIN_REMOTE__='{!$RemoteAction.OrgLoomNativeAdmin.invoke}';</script>
       <script src="{!URLFOR($Resource.OrgLoomNativeAssets, 'native/admin.js')}"></script>
     </apex:outputPanel>

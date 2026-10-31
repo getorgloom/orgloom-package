@@ -39,6 +39,7 @@ documented build transformations supply the differences.
 | AI/MCP/presence | Hosted feature services | Modules excluded; bootstrap compatibility interfaces make no requests |
 | Saves / sharing | Hosted orchestration around package storage | Encrypted revisions, role-restricted recipient requests, version checks and exclusive leases; no email or live collaboration |
 | Writes | Salesforce API operations | Bulk user-mode Apex DML; up to 500 records in independent atomic batches of at most 200; durable plan and attempt receipts |
+| Classic encrypted text | Tab-local values and explicit upload proposals | Same field controls; user-mode reads enforce FLS and Salesforce masking. Only explicit replacements/clears are uploaded. Server-side sanitization excludes values from saved/shared canvases, recovery, and Recall snapshots; JSON/CSV export excludes them too. Only intent field names persist. Contributors cannot submit encrypted values. |
 | Migration | Connect/switch org | Marked or foreign-org normal JSON imports stage matching and field/value reconciliation; explicit Apply replaces the local canvas |
 
 ## Build sequence and acceptance
@@ -146,6 +147,16 @@ applied to the full revision. Choosing an existing record for a whole-record req
 with hidden content requires its owner because replacing the identity would discard
 that content; entering visible fields for a new record is supported.
 
+Request configuration saves use a separate `canvas:request` operation when the
+modal is submitted or a request is removed/converted. It checks author capability,
+owner/editor role, lease, version, and current visibility. Existing records accept
+only request metadata; their values, layout and delete flags remain unchanged.
+New request cards include only their own context. Stored relationship endpoints
+follow request conversions, including links withheld from the editor. The client
+advances only the request portion of its saved baseline and rebases recovery to
+the new revision, preserving unrelated unsaved edits. Failed saves retain local
+changes and offer Retry. An unsaved canvas still requires its initial named save.
+
 Contributions are merged into one encrypted revision under the exclusive lease
 and expected-version check. Whole-record choices use server-validated identities;
 browser-provided values accompanying an existing-record choice are discarded.
@@ -195,8 +206,8 @@ permissions or the outside-child guard.
   overrides are implemented, but an active-rule UAT walkthrough remains unverified.
 - UI API object support, required lookup-filter suggestions and validation-rule
   metadata do not have complete hosted parity; Salesforce still validates writes.
-- Native limits remain 500 upload records, 200 per atomic group, 100 saved records,
-  250 KB canvas payload and 500 KB serialized Recall snapshot. Customer automation
+- Native limits remain 500 upload records, 200 per atomic group, 500 saved records,
+  1 MB canvas payload and 500 KB serialized Recall snapshot. Customer automation
   can impose lower effective limits.
 
 ## Local tools and saved-canvas lifecycle

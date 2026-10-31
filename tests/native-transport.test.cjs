@@ -5,10 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 function harness(options={}) {
-  const calls = [], timers = [], overlays = [];
+  const calls = [], timers = [], overlays = [], events = {};
   const window = {
+    addEventListener:(name,fn)=>{events[name]=fn;},
     __ORGLOOM_NATIVE_IDENTITY__: { orgId:'test-org', userId:'test-user', orgName:'Test org', ...options.identity },
     localStorage:options.storage,
+    sessionStorage:options.sessionStorage,
     __ORGLOOM_NATIVE_REMOTE__: 'test.invoke',
     Orgloom: { canvasState: { getCurrentCanvas:()=>({canvasId:'draft-test'}) } },
     OrgLoom: { uiFeedback: { mount:()=>({showConfirmDialog:options.showConfirmDialog||(()=>{throw Error('Unexpected takeover dialog');})}) } },
@@ -16,12 +18,13 @@ function harness(options={}) {
   let now = 0;
   const clock = class extends Date { static now() { return now; } };
   const context = {
-    window, Date:clock, Response, URL, location:{origin:'https://test.invalid'}, navigator:{},
+    window, Date:clock, Response, URL, crypto:require('node:crypto').webcrypto, location:{origin:'https://test.invalid'}, navigator:options.navigator||{},
     confirm:options.confirm||(()=>true), setInterval:(fn,ms)=>timers.push({fn,ms}),
-    document:{readyState:'complete',createElement:()=>({setAttribute(){},append(){},remove(){this.removed=true;}}),body:{append:el=>overlays.push(el)}},
+    document:{hidden:false,addEventListener:(name,fn)=>{events[name]=fn;},readyState:'complete',createElement:()=>({setAttribute(){},append(){},remove(){this.removed=true;}}),body:{append:el=>overlays.push(el)}},
     Visualforce:{remoting:{Manager:{invokeAction(remote,op,raw,callback){
       const body=JSON.parse(raw);calls.push({op,body});
-      if(op==='canvas:open'&&options.occupied&&!body.takeover&&!body.sessionToken){
+      if(op==='canvas:heartbeat'&&options.heartbeat){options.heartbeat(callback,body);return;}
+      if(op==='canvas:open'&&options.occupied&&!body.takeover&&body.sessionToken!==(options.sessionToken||'session-token')){
         callback(JSON.stringify({status:400,data:{message:options.occupied}}),{status:true});return;
       }
       let data={ok:true};
@@ -34,13 +37,128 @@ function harness(options={}) {
         data={results:[{tempId:body.index+1,id:'record-'+body.index,success:!options.rejectGroup?.includes(body.index)}],deletes:[],canonicalValues:{}};
       }
       if(op==='reads:counts')data={counts:body.probes.map(p=>({...p,count:1}))};
-      if(op==='canvas:create'||op==='canvas:open')data={id:body.id||'a00123456789012',sessionToken:'session-token',partialView:options.partialView};
+      if(op==='canvas:create'||op==='canvas:open')data={id:body.id||'a00123456789012',sessionToken:options.sessionToken||'session-token',partialView:options.partialView};
       callback(JSON.stringify({status:200,data}),{status:true});
     }}}},
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../web/native.js'),'utf8'),context);
-  return {window,calls,timers,overlays,tick:ms=>{now+=ms;},fetch:(url,method='GET',body)=>window.fetch(url,{method,body:body&&JSON.stringify(body)})};
+  return {window,calls,timers,overlays,events,document:context.document,tick:ms=>{now+=ms;},fetch:(url,method='GET',body)=>window.fetch(url,{method,body:body&&JSON.stringify(body)})};
 }
+
+test('visible sessions check every five seconds without saving or checkpointing',async()=>{
+  const h=harness();await h.fetch('/api/canvas/a00123456789012');
+  h.calls.length=0;
+  h.window.OrgLoomNativeRecovery={beforeSave:()=>{throw Error('Unexpected recovery save');},saved:()=>{throw Error('Unexpected recovery save');}};
+  const visible=h.timers.filter(t=>t.ms===5000).at(-1);
+  await visible.fn();await visible.fn();
+  await h.timers.find(t=>t.ms===30000).fn();
+  assert.deepEqual(h.calls.map(c=>c.op),['canvas:heartbeat','canvas:heartbeat']);
+  h.document.hidden=true;
+  await visible.fn();await h.events.visibilitychange();
+  assert.equal(h.calls.length,2);
+  await h.timers.find(t=>t.ms===30000).fn();
+  assert.equal(h.calls.length,3,'Background lease still refreshes every thirty seconds');
+  h.document.hidden=false;
+  await h.events.visibilitychange();await h.events.focus();
+  assert.equal(h.calls.length,5,'Returning to the tab or window checks immediately');
+});
+
+test('request changes carry the canvas lease and wait for caller to rebase recovery',async()=>{
+  const h=harness();await h.fetch('/api/canvas/a00123456789012');
+  let paused=0,retired=0;
+  h.window.OrgLoomNativeRecovery={beforeSave:async()=>paused++,saved:async()=>retired++};
+  const result=await h.fetch('/api/canvas/a00123456789012/request-change','POST',{expectedVersionId:'version',record:{tempId:'one',objectName:'Account'}});
+  assert.equal(result.status,200);assert.equal(paused,1);assert.equal(retired,0);
+  const call=h.calls.find(c=>c.op==='canvas:request');
+  assert.equal(call.body.sessionToken,'session-token');assert.equal(call.body.expectedVersionId,'version');assert.equal(call.body.record.tempId,'one');
+});
+
+test('stale recovery reopening uses normal takeover confirmation before acquiring a session',async()=>{
+  let confirmed=0;
+  const h=harness({occupied:'OCCUPIED: Another user currently has this canvas open.',showConfirmDialog:async()=>{confirmed++;return true;}});
+  await h.window.OrgLoomNativeRecoveryHost.openSaved('a00123456789012');
+  assert.equal(confirmed,1);
+  assert.equal(h.calls[0].body.takeover,undefined);assert.equal(h.calls[1].body.takeover,true);
+  const cancelled=harness({occupied:'OCCUPIED: Another user currently has this canvas open.',showConfirmDialog:async()=>false});
+  await assert.rejects(()=>cancelled.window.OrgLoomNativeRecoveryHost.openSaved('a00123456789012'),/cancelled/);
+  assert.equal(cancelled.calls.length,1);
+});
+
+test('takeover detection blocks the previous editor and stops further heartbeats',async()=>{
+  const h=harness({heartbeat:callback=>callback(JSON.stringify({status:400,data:{message:'SESSION_ENDED: Another session took over.'}}),{status:true})});
+  await h.fetch('/api/canvas/a00123456789012');
+  await h.events.focus();
+  assert.equal(h.overlays.at(-1).id,'native-session-ended');
+  const count=h.calls.length;
+  await h.events.visibilitychange();
+  for(const timer of h.timers)await timer.fn();
+  assert.equal((await h.fetch('/api/canvas/a00123456789012','PUT',{payload:{}})).status,400);
+  assert.equal(h.calls.length,count);
+});
+
+test('focus and timer checks do not overlap an outstanding heartbeat',async()=>{
+  let finish;
+  const h=harness({heartbeat:callback=>{finish=callback;}});
+  await h.fetch('/api/canvas/a00123456789012');
+  const pending=h.events.focus();
+  await h.events.visibilitychange();
+  await h.timers.filter(t=>t.ms===5000).at(-1).fn();
+  assert.equal(h.calls.filter(c=>c.op==='canvas:heartbeat').length,1);
+  finish(JSON.stringify({status:200,data:{ok:true}}),{status:true});await pending;
+});
+
+function tabSessionStorage(values=new Map()){
+  return {values,getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)};
+}
+function tabLocks(){
+  const held=new Set();
+  return {held,request(name,options,callback){
+    if(held.has(name))return Promise.resolve(callback(null));
+    held.add(name);return Promise.resolve(callback({name}));
+  }};
+}
+test('refresh resumes this tab lease without a takeover prompt or persisted record data',async()=>{
+  const storage=tabSessionStorage(),locks=tabLocks(),sessionToken='a'.repeat(64);
+  const first=harness({sessionStorage:storage,navigator:{locks},sessionToken});
+  await first.fetch('/api/canvas','POST',{name:'Private title',payload:{drafts:[{values:{Name:'Private record'}}]}});
+  assert.equal(storage.values.size,1);
+  const saved=JSON.parse([...storage.values.values()][0]);
+  assert.deepEqual(Object.keys(saved).sort(),['canvasId','id','token']);
+  assert.equal(saved.token,sessionToken);
+  locks.held.clear(); // Browser releases Web Locks when the old document unloads.
+  const refreshed=harness({sessionStorage:storage,navigator:{locks},sessionToken,occupied:'OCCUPIED_SELF: Another session'});
+  assert.equal((await refreshed.fetch('/api/canvas/a00123456789012')).status,200);
+  assert.equal(refreshed.calls[0].body.sessionToken,sessionToken);
+  assert.equal(refreshed.calls[0].body.takeover,undefined);
+});
+test('duplicating a tab cannot silently reuse its copied editing token',async()=>{
+  const storage=tabSessionStorage(),locks=tabLocks(),sessionToken='b'.repeat(64);
+  const first=harness({sessionStorage:storage,navigator:{locks},sessionToken});
+  await first.fetch('/api/canvas/a00123456789012');
+  const copy=tabSessionStorage(new Map(storage.values));let prompts=0;
+  const duplicate=harness({sessionStorage:copy,navigator:{locks},sessionToken,occupied:'OCCUPIED_SELF: Another session',showConfirmDialog:async()=>{prompts++;return false;}});
+  assert.equal((await duplicate.fetch('/api/canvas/a00123456789012')).status,400);
+  assert.equal(prompts,1);assert.equal(duplicate.calls[0].body.sessionToken,undefined);
+  assert.notEqual(JSON.parse([...storage.values.values()][0]).id,JSON.parse([...copy.values.values()][0]).id);
+  assert.equal(JSON.parse([...copy.values.values()][0]).token,undefined);
+});
+test('stale cached leases and unavailable Web Locks retain takeover protection',async()=>{
+  for(const withLocks of [true,false]){
+    const storage=tabSessionStorage(),locks=tabLocks();
+    const first=harness({sessionStorage:storage,navigator:{locks},sessionToken:'c'.repeat(64)});
+    await first.fetch('/api/canvas/a00123456789012');locks.held.clear();let prompts=0;
+    const next=harness({sessionStorage:storage,navigator:withLocks?{locks}:{},sessionToken:'d'.repeat(64),occupied:'OCCUPIED_SELF: Another session',showConfirmDialog:async()=>{prompts++;return false;}});
+    assert.equal((await next.fetch('/api/canvas/a00123456789012')).status,400);
+    assert.equal(prompts,1);assert.equal(next.calls.length,1);
+  }
+});
+test('switching away clears the resumable lease metadata',async()=>{
+  const storage=tabSessionStorage(),locks=tabLocks();
+  const h=harness({sessionStorage:storage,navigator:{locks},sessionToken:'e'.repeat(64)});
+  await h.fetch('/api/canvas/a00123456789012');h.tick(11000);
+  await h.timers.find(t=>t.ms===5000).fn();
+  assert.deepEqual(Object.keys(JSON.parse([...storage.values.values()][0])),['id']);
+});
 
 test('own-session takeover waits for Continue here and explains unsaved changes',async()=>{
   let prompt,accept;
@@ -144,7 +262,7 @@ test('deleting the active saved canvas stops its heartbeat and passes the editin
   const h=harness();await h.fetch('/api/canvas','POST',{name:'Draft'});
   await h.fetch('/api/canvas/a00123456789012','DELETE');
   assert.deepEqual(h.calls.at(-1),{op:'canvas:delete',body:{id:'a00123456789012',sessionToken:'session-token'}});
-  const count=h.calls.length;await h.timers.find(t=>t.ms===30000).fn();assert.equal(h.calls.length,count);
+  const count=h.calls.length;await h.timers.filter(t=>t.ms===5000).at(-1).fn();assert.equal(h.calls.length,count);
 });
 
 test('partial-view notice explains preservation and clears when the canvas changes',async()=>{
@@ -166,7 +284,7 @@ test('switching to an unsaved canvas releases only the previous session',async()
   await h.timers.find(t=>t.ms===5000).fn();
   assert.equal(h.calls.at(-1).op,'canvas:release');
   assert.equal(h.calls.at(-1).body.sessionToken,'session-token');
-  await h.timers.find(t=>t.ms===30000).fn();
+  await h.timers.filter(t=>t.ms===5000).at(-1).fn();
   assert.equal(h.calls.length,2);
   assert.equal(h.overlays.length,0);
 });
