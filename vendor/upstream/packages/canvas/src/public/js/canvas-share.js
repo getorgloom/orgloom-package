@@ -62,7 +62,10 @@
 				let _seq = 0;
 				let _picked = null;
 				let excludedUserKeys = new Set();
-				const userKey = (id) => String(id || '').slice(0, 15).toUpperCase();
+				const userKey = (id) =>
+					String(id || '')
+						.slice(0, 15)
+						.toUpperCase();
 
 				async function runSearch(q) {
 					const mySeq = ++_seq;

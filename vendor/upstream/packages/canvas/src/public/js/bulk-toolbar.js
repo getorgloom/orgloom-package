@@ -142,7 +142,11 @@
 				).length;
 				const _uploadEmpty = canvasState.bulkRecords.filter((r) => !r.isTypeNode).length === 0;
 				const bulkOpsBtn = canEditCanvasStructure()
-					? '<button type="button" class="batch-btn" data-bulk-ops title="Generate records with AI, auto-fill drafts, bulk edit fields, run a script, or compare records">Tools ▾</button>'
+					? '<button type="button" class="batch-btn" data-bulk-ops title="' +
+						(window.ORGLOOM_MOCK
+							? 'Auto-fill drafts, bulk edit fields, run a script, or compare records'
+							: 'Generate records with AI, auto-fill drafts, bulk edit fields, run a script, or compare records') +
+						'">Tools ▾</button>'
 					: '';
 				const _allRealCount = canvasState.bulkRecords.filter((r) => !r.isTypeNode).length;
 				const _selectedRealCount = canvasState.bulkRecords.filter(

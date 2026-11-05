@@ -5662,21 +5662,35 @@ function csrfFetch(url, options) {
 		const canvas = canvasState.currentCanvas;
 		if (!canvas?.id) return promptCanvasSave({ title: 'Save this canvas to save request changes' });
 		const save = async () => {
-			if (!canvas?.id || canvasState.currentCanvas !== canvas || !canvasState.bulkRecords.includes(rec)) return false;
+			if (!canvas?.id || canvasState.currentCanvas !== canvas || !canvasState.bulkRecords.includes(rec))
+				return false;
 			try {
 				const payload = buildCanvasPayload();
-				const record = [...payload.loadedRecords, ...payload.drafts].find(row => row.canvasRecordId === rec._canvasRecordId);
+				const record = [...payload.loadedRecords, ...payload.drafts].find(
+					(row) => row.canvasRecordId === rec._canvasRecordId,
+				);
 				if (!record) throw new Error('This record is no longer available.');
-				const result = await platform.saveRequestChange({ canvas, record,
-					schemaObject: payload.schema.objects.find(object => object.name === rec.objectName), csrfFetch });
+				const result = await platform.saveRequestChange({
+					canvas,
+					record,
+					schemaObject: payload.schema.objects.find((object) => object.name === rec.objectName),
+					csrfFetch,
+				});
 				if (canvasState.currentCanvas !== canvas) return false;
 				canvas.versionId = result.versionId;
 				_canvasSaveState.captureRequest(result.record, result.schemaObject);
 				await platform.recovery?.requestSaved?.();
 				return true;
 			} catch (error) {
-				showBulkToastWithAction('Request changes could not be saved. Your changes are still on this canvas. ' + (error.message || error),
-					'Retry', async () => { if (await _saveRequestChange(rec)) showBulkToast('Request changes saved.'); }, 'error');
+				showBulkToastWithAction(
+					'Request changes could not be saved. Your changes are still on this canvas. ' +
+						(error.message || error),
+					'Retry',
+					async () => {
+						if (await _saveRequestChange(rec)) showBulkToast('Request changes saved.');
+					},
+					'error',
+				);
 				return false;
 			} finally {
 				await platform.recovery?.saved?.(false);
@@ -5834,7 +5848,13 @@ function csrfFetch(url, options) {
 			);
 			renderBulkView();
 		});
-		if (!(await _saveNewRequestCanvas(config, canvasState.bulkRecords.find(record => record.id === recordId)))) return false;
+		if (
+			!(await _saveNewRequestCanvas(
+				config,
+				canvasState.bulkRecords.find((record) => record.id === recordId),
+			))
+		)
+			return false;
 		const _slotAssigneeBit = config.assigneeName
 			? ' (assigned to ' + config.assigneeName + ')'
 			: ' (open to any recipient)';

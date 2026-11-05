@@ -4,9 +4,9 @@
       "path": "force-app",
       "default": true,
       "package": "Orgloom",
-      "versionName": "Org Loom 0.8",
-      "versionNumber": "0.8.0.NEXT",
-      "ancestorId": "04tao000005eOojAAE",
+      "versionName": "Org Loom 0.9",
+      "versionNumber": "0.9.0.NEXT",
+      "ancestorId": "04tao000005eR9tAAE",
       "postInstallScript": "OrgLoomNativeInstall",
       "versionDescription": "Salesforce-native canvas with encrypted recovery and admin activity. Released metadata retained for package compatibility."
     }
@@ -17,6 +17,7 @@
   "packageAliases": {
     "Orgloom": "0Hoao0000003RYLCA2",
     "Orgloom@0.6.0-2": "04tao000005eJsHAAU",
-    "Orgloom@0.7.0-15": "04tao000005eOojAAE"
+    "Orgloom@0.7.0-15": "04tao000005eOojAAE",
+    "Orgloom@0.8.0-1": "04tao000005eR9tAAE"
   }
 }

@@ -1,20 +1,20 @@
 # Native managed package
 
-The native app is the next version of the existing **Orgloom** second-generation managed package (`0Hoao0000003RYLCA2`, namespace `orgloom`). Version 0.7 descends from released version 0.6.0.2 (`04tao000005eJsHAAU`), which descends from 0.5.0.12 (`04tao000005dalVAAQ`). We assume no customer installations and do not migrate hosted canvas ciphertext into the native format. Released-component compatibility rules still apply.
+The native app is the next version of the existing **Orgloom** second-generation managed package (`0Hoao0000003RYLCA2`, namespace `orgloom`). Version 0.8 descends from released version 0.7.0.15 (`04tao000005eOojAAE`), which descends from 0.6.0.2 (`04tao000005eJsHAAU`), which descends from 0.5.0.12 (`04tao000005dalVAAQ`). We assume no customer installations and do not migrate hosted canvas ciphertext into the native format. Released-component compatibility rules still apply.
 
 ## Released version
 
-**0.7.0.15**, released 2026-10-30: `04tao000005eOojAAE`.
+**0.8.0.1**, released 2026-11-04: `04tao000005eR9tAAE`.
 
-[Install in production or a Developer Edition org](https://login.salesforce.com/packaging/installPackage.apexp?p0=04tao000005eOojAAE) · [Install in a sandbox](https://test.salesforce.com/packaging/installPackage.apexp?p0=04tao000005eOojAAE).
+[Install in production or a Developer Edition org](https://login.salesforce.com/packaging/installPackage.apexp?p0=04tao000005eR9tAAE) · [Install in a sandbox](https://test.salesforce.com/packaging/installPackage.apexp?p0=04tao000005eR9tAAE).
 
 Choose **Install for Admins Only**, then assign app permissions and individual feature grants as described below. This version is production-installable; AppExchange security review and commercial licensing remain separate.
 
-The release includes the current native canvas code, including sharing/access checks, request autosave, encrypted-field handling, recovery/takeover fixes, migration/upload fixes, and the latest UI changes. Two activity-test fixtures were corrected: shared recipients need Open saved canvases, and non-admin users must not inherit the installer profile's admin permission.
+The release includes the current native implementation and refreshed canonical canvas runtime, including owner-only upload changes and the upload-result styling update. Existing sharing, request, encrypted-field, recovery, migration and Recall functionality is retained.
 
-Validation receipts are under `test-results/install-release-final-*`: **95% Apex coverage**, **184/184 installed Apex tests**, and **216/216 local native tests**. Fresh installation and upgrade from 0.6.0.2 passed. An encrypted canvas saved by 0.6 remained readable after the upgrade. Installer permissions, the protected-key boundary, encrypted save/open, lease protection, uploads and separate-request Recall passed. The earlier 0.7.0.14 candidate also passed an upgrade path through 0.5.0.12 and 0.6.0.2; it remains an unreleased beta. Validation used disposable scratch orgs, not UAT business data. No new browser UI verification is claimed for this release.
+Validation receipts are under `test-results/release-0.8-*`: **95% Apex coverage**, **184/184 installed Apex tests**, **216/216 local native tests**, and **91/91 shared upload/install-route tests**. Salesforce validation was not skipped. Clean installation and upgrades through 0.5.0.12, 0.6.0.2 and 0.7.0.15 to 0.8.0.1 passed. An encrypted canvas saved under 0.7 remained readable after upgrading to 0.8. Installer permissions, the protected-key boundary, encrypted save/open, lease protection, uploads and separate-request Recall passed. Validation used disposable scratch orgs, not UAT business data. No new browser UI verification is claimed for this release.
 
-The public website/email changes are local and await deployment. After deployment, `https://orgloom.com/install` and `https://orgloom.com/install/sandbox` redirect to this version. The next managed build targets **0.8.0.NEXT**, with this release as its ancestor. The installed package in orguat was not upgraded by this release process.
+The release manifest update is local and awaits website deployment. After deployment, `https://orgloom.com/install` and `https://orgloom.com/install/sandbox` redirect to this version; existing email links remain valid. The next managed build targets **0.9.0.NEXT**, with this release as its ancestor. The installed package in orguat was not upgraded by this release process.
 
 ## Cleanup validation, 2026-10-23
 
@@ -68,6 +68,6 @@ Namespaced builds enforce `UserInfo.isCurrentUserLicensed` in addition to app pe
 
 ## Release validation
 
-Use disposable orgs and records. Check both a clean installation and an upgrade from 0.5.0.12 even though there are no expected customer installations. Also test upgrade from the current released ancestor, 0.6.0.2. Validate installer grants, denial of non-admin toggle calls, encrypted save/reopen, user-mode reads/uploads and Recall, and the Lightning-to-namespaced-Visualforce layout bridge. Verify namespaced share links. Run packaged Apex tests and check the package's actual code coverage report before promotion.
+Use disposable orgs and records. Check both a clean installation and an upgrade from 0.5.0.12 even though there are no expected customer installations. Also test upgrade from the current released ancestor listed in `config/released-package.json`. Validate installer grants, denial of non-admin toggle calls, encrypted save/reopen, user-mode reads/uploads and Recall, and the Lightning-to-namespaced-Visualforce layout bridge. Verify namespaced share links. Run packaged Apex tests and check the package's actual code coverage report before promotion.
 
 Production enablement is authorized after these checks pass. Promotion makes a version releasable and is irreversible; record the version ID and validation results before distribution. Installation links use the resulting subscriber package version ID (`04t…`), not the Package2 ID (`0Ho…`).

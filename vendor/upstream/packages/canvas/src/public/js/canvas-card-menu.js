@@ -322,10 +322,13 @@
 							title: convertingRecordRequest
 								? 'Convert this record request to a draft?'
 								: 'Remove this field request?',
-							message: (convertingRecordRequest
-								? 'The request will end and the placeholder will become a normal draft you can edit.'
-								: 'The record stays on the canvas, but teammates will no longer be asked to complete these fields.')
-								+ (window.OrgLoom.platform?.saveRequestChange ? '' : ' Save the canvas to publish the change.'),
+							message:
+								(convertingRecordRequest
+									? 'The request will end and the placeholder will become a normal draft you can edit.'
+									: 'The record stays on the canvas, but teammates will no longer be asked to complete these fields.') +
+								(window.OrgLoom.platform?.saveRequestChange
+									? ''
+									: ' Save the canvas to publish the change.'),
 							confirmLabel: convertingRecordRequest ? 'Convert to draft' : 'Remove request',
 							cancelLabel: 'Cancel',
 							danger: !convertingRecordRequest,
@@ -758,8 +761,11 @@
 						},
 					});
 					const savedAssigneeName = String(initial.assigneeName || '').trim();
-					const needsAssigneeName = initial.assigneeSfUserId &&
-						(!savedAssigneeName || /^assigned teammate$/i.test(savedAssigneeName) || savedAssigneeName === initial.assigneeEmail);
+					const needsAssigneeName =
+						initial.assigneeSfUserId &&
+						(!savedAssigneeName ||
+							/^assigned teammate$/i.test(savedAssigneeName) ||
+							savedAssigneeName === initial.assigneeEmail);
 					if (initial.assigneeSfUserId && !needsAssigneeName) {
 						picker.setPicked({
 							id: initial.assigneeSfUserId,
@@ -794,15 +800,20 @@
 						const stillCurrent = () => overlay.isConnected && assigneeSelectionVersion === version;
 						(async () => {
 							try {
-								const response = await csrfFetch('/api/objects/User/records/' + encodeURIComponent(initial.assigneeSfUserId), { credentials: 'same-origin' });
+								const response = await csrfFetch(
+									'/api/objects/User/records/' + encodeURIComponent(initial.assigneeSfUserId),
+									{ credentials: 'same-origin' },
+								);
 								const user = await response.json();
 								if (!stillCurrent()) return;
-								if (!response.ok || !user.Name || !sameSfUser(user.Id, initial.assigneeSfUserId)) throw new Error('Assignee unavailable');
+								if (!response.ok || !user.Name || !sameSfUser(user.Id, initial.assigneeSfUserId))
+									throw new Error('Assignee unavailable');
 								picker.setPicked({ id: user.Id, name: user.Name, email: user.Email || '' });
 							} catch (_) {
 								if (!stillCurrent()) return;
 								accessEl.hidden = true;
-								errorEl.textContent = 'Could not load the assigned user’s name. Choose the teammate again, or cancel to keep the existing assignment.';
+								errorEl.textContent =
+									'Could not load the assigned user’s name. Choose the teammate again, or cancel to keep the existing assignment.';
 								errorEl.hidden = false;
 							}
 						})();
